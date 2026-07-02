@@ -1,0 +1,7 @@
+interface:
+  display_name: "Local Investment Research"
+  short_description: "Local stock research with SQLite market data and portfolio memory"
+  default_prompt: "Use $local-investment-research to analyze a stock, review a portfolio, screen A-shares, or update my local investment wiki."
+
+policy:
+  allow_implicit_invocation: true
