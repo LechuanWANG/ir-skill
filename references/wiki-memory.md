@@ -1,29 +1,29 @@
-# Investment LLM Wiki Memory
+# Investment LLM Wiki 记忆
 
-Use the local Investment LLM Wiki at `docs/investment-llm-wiki/` for persistent investment memory.
+使用 `docs/investment-llm-wiki/` 中的本地 Investment LLM Wiki 作为持久投资记忆。
 
-## Recall Before
+## 分析前召回
 
-Read `docs/investment-llm-wiki/index.md` first, then relevant pages:
+先读 `docs/investment-llm-wiki/index.md`，再读相关页面：
 
-- `profile.md` for preferences, risk tolerance, constraints, and deep-mode thresholds
-- `portfolio.md` for current holdings
-- company/industry/entity pages
-- analysis/thesis pages
-- decision pages
+- `profile.md`：偏好、风险承受能力、约束和深度模式阈值
+- `portfolio.md`：当前持仓
+- 公司/行业/entity 页面
+- analysis/thesis 页面
+- decision 页面
 
-## Update After
+## 分析后更新
 
-After analysis, update only useful durable knowledge:
+分析后，只更新有用且可持久化的知识：
 
-- append `log.md`
-- update entity pages for durable facts
-- update analysis pages for thesis changes
-- create decision pages for buy/sell/add/reduce/wait decisions
-- use `contradiction` blocks when new evidence conflicts with old claims
+- 追加 `log.md`
+- 用持久事实更新 entity 页面
+- 用投资假设变化更新 analysis 页面
+- 为买/卖/加/减/等决策创建 decision 页面
+- 当新证据与旧说法冲突时，使用 `contradiction` 块
 
-Ask before writing sensitive holdings, funds, or preference details unless the user explicitly requested a wiki update.
+写入敏感持仓、资金或偏好细节前必须询问，除非用户明确要求更新 Wiki。
 
-## Link Discipline
+## 链接纪律
 
-Use wiki links such as `[[portfolio]]`, `[[0700.HK]]`, and `[[2026-07-01-0700-add]]`. Raw source files stay immutable.
+使用 `[[portfolio]]`、`[[0700.HK]]`、`[[2026-07-01-0700-add]]` 这样的 Wiki 链接。原始来源文件保持不可变。

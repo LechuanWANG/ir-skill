@@ -1,4 +1,4 @@
-# Quick Investment Memo
+# 快速投资备忘录
 
 【结论】
 

@@ -1,4 +1,4 @@
-# Decision Record
+# 决策记录
 
 ---
 type: decision
@@ -8,14 +8,14 @@ confidence: medium
 tags: [investment, decision]
 ---
 
-## Decision
+## 决策
 
-## Context
+## 背景
 
-## Evidence
+## 证据
 
-## Action
+## 行动
 
-## Disconfirmation
+## 证伪
 
-## Follow-Up
+## 后续跟进

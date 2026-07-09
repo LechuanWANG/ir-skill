@@ -1,36 +1,36 @@
-# Portfolio And Thesis
+# 组合与投资假设
 
-Use this reference for holdings, position sizing, and thesis tracking.
+持仓、仓位测算和投资假设跟踪使用本参考资料。
 
-## Read First
+## 先读
 
-Before portfolio advice, read:
+给组合建议前，先读：
 
 - `docs/investment-llm-wiki/profile.md`
 - `docs/investment-llm-wiki/portfolio.md`
-- relevant `decision` and `analysis` pages from `docs/investment-llm-wiki/index.md`
+- `docs/investment-llm-wiki/index.md` 中相关的 `decision` 和 `analysis` 页面
 
-If no structured portfolio exists, ask the user for holdings or proceed with clearly marked assumptions.
+如果没有结构化组合，询问用户持仓，或在明确标记假设的前提下继续。
 
-## Portfolio Checks
+## 组合检查
 
-Assess:
+评估：
 
-- largest position and top-three concentration
-- country/currency/sector/theme concentration
-- cash level
-- hidden correlations
-- opportunity cost versus the strongest current idea
-- whether the user would buy each holding today at current price
+- 最大持仓和前三大持仓集中度
+- 国家/币种/行业/主题集中度
+- 现金水平
+- 隐性相关性
+- 与当前最强想法相比的机会成本
+- 用户是否愿意以当前价格买入每个持仓
 
-## Thesis Health
+## 投资假设健康度
 
-For each holding:
+对每个持仓：
 
-- original thesis
-- current evidence supporting it
-- new evidence against it
-- disconfirming condition
-- action: add/hold/reduce/sell/wait
+- 原始投资假设
+- 当前支持它的证据
+- 新出现的反证
+- 证伪条件
+- 行动：加 / 持有 / 减 / 卖 / 等
 
-Update or create a decision page after user confirmation when the recommendation materially changes a position.
+当建议会实质性改变仓位时，在用户确认后更新或创建 decision 页面。

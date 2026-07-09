@@ -1,51 +1,51 @@
-# Decision Framework
+# 决策框架
 
-Use this reference for buy/sell/hold, position sizing, and investment thesis decisions.
+买/卖/持有、仓位测算和投资假设决策时使用本参考资料。
 
-## Required Logic Chain
+## 必需逻辑链
 
-Evaluate in this order:
+按以下顺序评估：
 
-1. **Macro**: rates, liquidity, currency, policy, and market risk appetite.
-2. **Industry**: cycle position, supply/demand, regulation, competition, and pricing power.
-3. **Company**: business model, moat, management, financial quality, and execution.
-4. **Valuation**: current price versus reasonable future paths, not just current multiples.
-5. **Portfolio**: existing exposure, concentration, correlation, opportunity cost, and cash level.
+1. **宏观**：利率、流动性、汇率、政策和市场风险偏好。
+2. **行业**：周期位置、供需、监管、竞争和定价权。
+3. **公司**：商业模式、护城河、管理层、财务质量和执行力。
+4. **估值**：当前价格与合理未来路径的关系，而不只是当前倍数。
+5. **组合**：现有敞口、集中度、相关性、机会成本和现金水平。
 
-Do not conclude from a single layer. If one layer dominates the conclusion, explain why.
+不要只从单一层面下结论。如果某一层主导结论，解释原因。
 
-## Decision Labels
+## 决策标签
 
-Use one explicit action:
+使用一个明确行动：
 
-| Label | Meaning |
+| 标签 | 含义 |
 |---|---|
-| Buy | Start a position now within sizing limits |
-| Add | Increase an existing position |
-| Wait | Thesis is interesting, but price/data/timing is not enough |
-| Hold | Keep current position without action |
-| Reduce | Lower exposure while keeping the thesis alive |
-| Sell | Exit because thesis is broken or opportunity cost is too high |
-| Avoid | Do not pursue; fails quality/risk/valuation gates |
+| 买 | 在仓位限制内现在开始建仓 |
+| 加 | 增加现有仓位 |
+| 等 | 投资假设有意思，但价格/数据/时机还不够 |
+| 持有 | 保持当前仓位，不采取行动 |
+| 减 | 降低敞口，但投资假设尚未失效 |
+| 卖 | 因投资假设破裂或机会成本太高而退出 |
+| 不碰 | 不跟进；未通过质量/风险/估值门槛 |
 
-## Buy-Before-Verification Conditions
+## 买入前验证条件
 
-For investment conclusions, state what must be verified before action:
+给出投资结论时，说明行动前必须验证什么：
 
-- price or valuation zone, if calculable
-- financial report items that must confirm the thesis
-- original filings or announcement events that must be read
-- disconfirming conditions that would move the label to Wait, Reduce, Sell, or Avoid
+- 可计算时，给出价格或估值区间
+- 必须确认投资假设的财报项目
+- 必须阅读的原始披露或公告事件
+- 会让标签转为“等”“减”“卖”或“不碰”的证伪条件
 
-Do not add scenario tables by default; include them only when the user explicitly asks for that format.
+默认不要添加情景表；只有用户明确要求该格式时才加入。
 
-## Evidence Quality
+## 证据质量
 
-Separate:
+区分：
 
-- **Facts**: sourced data or filings.
-- **Inference**: reasoned conclusion from facts.
-- **Opinion**: judgment call with uncertainty.
-- **Unknown**: missing or unavailable information.
+- **事实**：有来源的数据或披露。
+- **推断**：从事实推导出的结论。
+- **观点**：带不确定性的判断。
+- **未知**：缺失或不可得的信息。
 
-Never hide unknowns by writing a complete-sounding answer.
+不要用听起来完整的回答掩盖未知项。

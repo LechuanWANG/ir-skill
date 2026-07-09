@@ -1,6 +1,6 @@
-# Output Templates
+# 输出模板
 
-## Quick Memo
+## 快速备忘录
 
 ```text
 【结论】一句话说明现在该做什么。
@@ -8,10 +8,10 @@
 【为什么】1-2 句大白话。
 【最大风险 / 证伪】出现什么情况说明判断错了。
 【数据】关键数字 + 来源 + 取数时间；缺失就写“不可得”。
-【下一步】是否需要深度模式；是否写回 wiki。
+【下一步】是否需要深度模式；是否写回 Wiki。
 ```
 
-## Deep Report
+## 深度报告
 
 ```text
 1. 一句话结论 + 操作 + 置信度
@@ -26,46 +26,46 @@
 10. Wiki 写回计划：写哪些页，是否需要用户确认
 ```
 
-## Report Artifacts
+## 报告产物
 
-For generated reports, create one run folder:
+生成报告时，为每次运行创建一个文件夹：
 
 ```text
 outputs/reports/{report_slug}_{YYYYMMDD}/
-├── data/      raw pulls, derived CSVs, source_summary.json
-├── tex/       LaTeX source
-├── build/     compiler scratch files only
-├── pdf/       final user-facing PDF only
-└── rendered/  rendered PNG pages for visual QA
+├── data/      原始抓取、派生 CSV、source_summary.json
+├── tex/       LaTeX 源文件
+├── build/     仅放编译临时文件
+├── pdf/       仅放最终面向用户的 PDF
+└── rendered/  用于视觉 QA 的渲染 PNG 页面
 ```
 
-Rules:
+规则：
 
-- Put the final PDF only under `pdf/`. If the compiler writes a PDF into `build/`, copy it to `pdf/` and remove the build copy after verification.
-- Keep TeX, data, rendered images, and compile scratch files in their own subfolders.
-- Keep exact raw data files in `data/`; visible report text can summarize source names instead of printing long local paths.
+- 最终 PDF 只放在 `pdf/` 下。如果编译器把 PDF 写进 `build/`，验证后复制到 `pdf/` 并删除 build 中的副本。
+- TeX、数据、渲染图片和编译临时文件分别保存在各自子目录。
+- 精确原始数据文件保留在 `data/`；可见报告正文可以概述来源名称，不要打印很长的本地路径。
 
 ## LaTeX / PDF QA
 
-Before delivering a LaTeX report:
+交付 LaTeX 报告前：
 
-- Escape generated table text for LaTeX special characters: `%`, `_`, `&`, `#`, `$`.
-- Use XeLaTeX for Chinese reports.
-- Use landscape pages, smaller font sizes, or narrower columns for wide tables.
-- Avoid long raw file paths in visible report text; place exact files in the report-local `data/` folder.
-- Compile once, inspect fatal errors and obvious layout warnings, then fix the source.
-- Render the PDF to PNG and inspect at least the cover, one wide table, one company detail page, and the final page for clipping, overlap, unreadable glyphs, and misplaced headers/footers.
+- 对生成表格文本中的 LaTeX 特殊字符转义：`%`, `_`, `&`, `#`, `$`。
+- 中文报告使用 XeLaTeX。
+- 宽表使用横向页面、更小字号或更窄列。
+- 可见报告正文避免出现很长的原始文件路径；精确文件放入报告本地 `data/` 文件夹。
+- 先编译一次，检查致命错误和明显版式警告，然后修复源文件。
+- 将 PDF 渲染为 PNG，并至少检查封面、一张宽表、一页公司详情和最后一页，确认没有裁切、重叠、不可读字形，以及错位页眉/页脚。
 
-## Screening Output
+## 筛选输出
 
 ```text
 候选池摘要：
 - 数据范围：
 - 风格预设：
 - 市场局势判断：
-- 自定义筛选规则：若无则写“使用默认 baseline”
-- baseline 对比：自定义规则相对默认 preset 增删了什么
-- 筛选指标：trend/value/quality/growth + overheat/value/risk penalties
+- 自定义筛选规则：若无则写“使用默认基线”
+- 基线对比：自定义规则相对默认预设增删了什么
+- 筛选指标：trend/value/quality/growth + 过热/估值/风险惩罚
 - 前 N 名：
 - filter_log：
   - 数据完整度：进入 X，剩余 Y，淘汰 Z

@@ -1,43 +1,43 @@
-# Industry And Macro
+# 行业与宏观
 
-Use this reference when the decision depends on sector cycle, policy, macro, or price-move attribution.
+当决策取决于行业周期、政策、宏观或价格异动归因时，使用本参考资料。
 
-## Industry Questions
+## 行业问题
 
-- Where is the industry in the cycle?
-- Is demand accelerating, normalizing, or deteriorating?
-- Is supply constrained or expanding?
-- Who has pricing power?
-- What policy/regulatory variables matter?
-- Which part of the value chain captures the economics?
+- 行业处在周期什么位置？
+- 需求是在加速、正常化，还是恶化？
+- 供给受限还是扩张？
+- 谁拥有定价权？
+- 哪些政策/监管变量重要？
+- 价值链哪个环节捕获经济利益？
 
-## Macro Questions
+## 宏观问题
 
-- Do rates, liquidity, currency, commodity prices, or policy alter the thesis?
-- Is the stock moving with market beta, sector beta, or company-specific news?
-- Does the macro regime change valuation multiples?
+- 利率、流动性、汇率、大宗商品价格或政策是否改变投资假设？
+- 股票是在跟随市场 beta、行业 beta，还是公司特定新闻？
+- 宏观环境是否改变估值倍数？
 
-## Required Web Refresh
+## 必需网络刷新
 
-For macro-sensitive conclusions, run a current web search before finalizing:
+对宏观敏感结论，最终确定前运行当前网络检索：
 
-- policy changes, sector regulation, subsidies, tariffs, export controls, or sanctions
-- war, geopolitical conflict, shipping disruption, or supply-chain disruption
-- central-bank decisions, interest-rate changes, liquidity operations, and credit policy
-- exchange rates, commodity prices, inflation, PMI, employment, GDP, and fiscal policy
+- 政策变化、行业监管、补贴、关税、出口管制或制裁
+- 战争、地缘冲突、航运扰动或供应链扰动
+- 央行决策、利率变化、流动性操作和信贷政策
+- 汇率、大宗商品价格、通胀、PMI、就业、GDP 和财政政策
 
-Prefer official sources for facts. Use reputable financial media to cross-check timing, market reaction, and interpretation. Record publication date, event date, retrieval date, and unresolved conflicts. If current web access is unavailable, label macro impact as unverified and lower confidence.
+事实优先使用官方来源。用可靠财经媒体交叉核对时间、市场反应和解读。记录发布日期、事件日期、获取日期和未解决冲突。如果当前网络访问不可用，将宏观影响标记为未验证并降低置信度。
 
-## Price-Move Attribution
+## 价格异动归因
 
-Classify the move:
+对异动分类：
 
-| Type | Meaning |
+| 类型 | 含义 |
 |---|---|
-| Fundamental | Earnings, guidance, product, regulation, or competitive reality changed |
-| Sentiment | Narrative or risk appetite changed without clear thesis damage |
-| Flow/liquidity | Positioning, buyback windows, index/ETF flow, forced selling |
-| Unknown | Move size is not explained by available public evidence |
-| Mixed | Multiple causes with rough contribution estimate |
+| 基本面 | 盈利、指引、产品、监管或竞争现实发生变化 |
+| 情绪 | 叙事或风险偏好变化，但投资假设未明显受损 |
+| 资金/流动性 | 仓位、回购窗口、指数/ETF flow、被动卖出 |
+| 未知 | 可得公开证据无法解释异动幅度 |
+| 混合 | 多个原因叠加，并给出粗略贡献估计 |
 
-For unknown or mixed moves, avoid overconfidence and list what needs monitoring.
+对未知或混合异动，避免过度自信，并列出需要跟踪什么。

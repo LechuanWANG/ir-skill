@@ -1,44 +1,44 @@
-# Deep Research Mode
+# 深度研究模式
 
-Use deep mode for explicit deep research, single-stock investment decisions, large position changes, or four-view analysis.
+用户明确要求深度研究、单只股票投资决策、大仓位变化或四视角分析时，使用深度模式。
 
-## Roles
+## 角色
 
-| Role | Focus | Output |
+| 角色 | 关注点 | 输出 |
 |---|---|---|
-| A1 Business/Moat | Business model, customer value, moat durability | Quality conclusion, key evidence, confidence |
-| A2 Financial/Valuation | Statements, valuation, cash conversion, key assumptions | Valuation conclusion, assumptions, confidence |
-| A3 Industry/Competition | Cycle, competitors, supply/demand, policy | Industry conclusion, risks, confidence |
-| A4 Risk/Management | Bear case, governance, management, disconfirmation | Risk conclusion, kill conditions, confidence |
+| A1 生意/护城河 | 商业模式、客户价值、护城河持久性 | 质量结论、关键证据、置信度 |
+| A2 财务/估值 | 报表、估值、现金转化、关键假设 | 估值结论、假设、置信度 |
+| A3 行业/竞争 | 周期、竞争对手、供需、政策 | 行业结论、风险、置信度 |
+| A4 风险/管理层 | 空头情景、治理、管理层、证伪 | 风险结论、一票否决条件、置信度 |
 
-## Portable Orchestration
+## 可移植编排
 
-Deep mode is a user-authorized four-agent workflow. When the runtime supports native subagents, spawn A1-A4 as parallel native subagents by default, with one bounded task per role. If subagents are unavailable, run the four analyses sequentially in the main agent using the same role prompts and output schema.
+深度模式是用户授权的四代理工作流。运行环境支持原生子代理（subagents）时，默认并行启动 A1-A4，每个角色只承担一个边界清晰的任务。若 subagents 不可用，就在主 agent 中使用这 4 个角色提示词和输出结构顺序完成四项分析。
 
-Subagent delegation must be scoped:
+子代理委派必须限定范围：
 
-- A1-A4 each research only their assigned lens.
-- Each subagent returns evidence, counter-evidence, confidence, unknowns, and action implication.
-- The lead does not outsource the final decision memo; the lead reconciles conflicts and writes the final output.
-- Preserve missing or failed subagent work as an explicit caveat instead of silently filling it in.
+- A1-A4 只研究各自分配的视角。
+- 每个 subagent 返回证据、反证、置信度、未知项和行动含义。
+- 负责人不外包最终决策备忘录；负责人负责调和冲突并撰写最终输出。
+- 缺失或失败的 subagent 工作必须作为明确限制说明保留，不要静默补齐。
 
-Each role must return:
+每个角色必须返回：
 
 ```text
-Conclusion:
-Evidence:
-Counter-evidence:
-Confidence:
-Unknowns:
-Implication for action:
+结论:
+证据:
+反证:
+置信度:
+未知项:
+行动含义:
 ```
 
-## Team Lead Duties
+## 负责人职责
 
-The lead must:
+负责人必须：
 
-1. Reconcile conflicts explicitly.
-2. List disagreements rather than blending them away.
-3. Preserve missing-role failures as caveats.
-4. Produce the final quick/deep template.
-5. Propose wiki write-back locations.
+1. 明确调和冲突。
+2. 列出分歧，不要把分歧融合掉。
+3. 将缺失角色或失败角色作为限制说明保留。
+4. 生成最终快速/深度模板。
+5. 提议 Wiki 写回位置。

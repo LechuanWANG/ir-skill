@@ -1,120 +1,120 @@
-# Factor Model
+# 因子模型
 
-Use this reference for deterministic A-share factor screening. The factor model narrows the market into a shortlist; it is not a trading signal and not a buy/sell decision.
+确定性 A 股因子筛选使用本参考资料。因子模型用于把全市场缩小为短名单；它不是交易信号，也不是买/卖决策。
 
-## Core Contract
+## 核心约定
 
-Screening must be reproducible:
+筛选必须可复现：
 
 ```text
-SQLite data -> hard gates -> factor scores -> penalties -> preset composite -> industry cap -> shortlist
+SQLite 数据 -> 硬门槛 -> 因子分 -> 惩罚项 -> 预设综合分 -> 行业上限 -> 短名单
 ```
 
-AI is used after the shortlist for adversarial review. AI may veto or re-rank finalists with evidence, but it must not replace hard gates, factor calculations, or missing data handling.
+AI 只在短名单之后用于对抗性复核。AI 可以基于证据否决或重排入围标的，但不能替代硬门槛、因子计算或缺失数据处理。
 
-Default presets are baselines. When current market conditions require custom screening, define the custom rule set before ranking names, run or retain a baseline preset for comparison, and show why the custom result differs.
+默认预设是基线。当前市场条件需要自定义筛选时，必须在排序标的前定义自定义规则集，运行或保留一个基线预设作为对照，并说明自定义结果为何不同。
 
-## Factor Layers
+## 因子层
 
-| Layer | Fields | Direction |
+| 层 | 字段 | 方向 |
 |---|---|---|
-| trend | `mom_12_1`, `sharpe_60d`, healthy `vr_60d` | higher is better, but overheat is penalized |
-| value | `pe_ttm`, `pb`, `ps_ttm`, `dv_ttm`, `pe_pctl_ind`, `pb_pctl_hist` | cheaper and higher yield are better |
-| quality | `roe_dt`, `netprofit_margin`, `grossprofit_margin`, `debt_to_assets`, `ocf_to_or` | profitability/cash higher, leverage lower |
-| growth | `netprofit_yoy`, `or_yoy` | higher is better, low quality discounts growth |
-| risk | `max_drawdown`, volatility proxy, liquidity | penalty or hard gate |
-| catalyst | optional bounded CSV/XLSX input for survivors only | reranks survivors, never restores failures |
+| trend | `mom_12_1`, `sharpe_60d`, 健康的 `vr_60d` | 越高越好，但过热会被惩罚 |
+| value | `pe_ttm`, `pb`, `ps_ttm`, `dv_ttm`, `pe_pctl_ind`, `pb_pctl_hist` | 越便宜、股息率越高越好 |
+| quality | `roe_dt`, `netprofit_margin`, `grossprofit_margin`, `debt_to_assets`, `ocf_to_or` | 盈利/现金越高越好，杠杆越低越好 |
+| growth | `netprofit_yoy`, `or_yoy` | 越高越好，低质量会折价增长 |
+| risk | `max_drawdown`, 波动率代理、流动性 | 惩罚或硬门槛 |
+| catalyst | 只针对幸存标的的可选有界 CSV/XLSX 输入 | 重排幸存标的，绝不恢复已淘汰标的 |
 
-Missing numeric factor values are neutralized to `0.5` for the affected score and must be mentioned in `pass_reason`.
+缺失的数值型因子在受影响分数中中性化为 `0.5`，并必须在 `pass_reason` 中说明。
 
-## Hard Gates
+## 硬门槛
 
-Default gates:
+默认门槛：
 
-| Gate | Rule |
+| 门槛 | 规则 |
 |---|---|
-| data completeness | `completeness >= 0.98` and `actual_window >= 100` |
-| ST/delisting | exclude names containing `ST`, `*ST`, or `退` |
-| daily valuation | current `daily_basic` row with `pe_ttm`, `pb`, `total_mv`, `circ_mv` |
-| size/liquidity | `total_mv >= 500000` and `circ_mv >= 200000` in TuShare ten-thousand CNY units |
-| drawdown | `max_drawdown <= 0.45` |
-| financial report | current announced `fina_indicator` with `roe_dt`, `netprofit_yoy`, `debt_to_assets` |
-| quality | `roe_dt >= 2` |
-| profit trend | `netprofit_yoy >= -20` |
-| leverage | `debt_to_assets <= 75` |
-| overheat hard band | `bias_60d` in `[-0.20, 0.80]`, `vr_60d` in `[0.40, 4.00]` |
-| valuation sanity | `pe_ttm > 0` and `pb > 0` |
+| 数据完整度 | `completeness >= 0.98` 且 `actual_window >= 100` |
+| ST/退市 | 排除名称包含 `ST`、`*ST` 或 `退` 的标的 |
+| 日频估值 | 当前 `daily_basic` 行包含 `pe_ttm`, `pb`, `total_mv`, `circ_mv` |
+| 规模/流动性 | TuShare 万元人民币单位下，`total_mv >= 500000` 且 `circ_mv >= 200000` |
+| 回撤 | `max_drawdown <= 0.45` |
+| 财报 | 当前已公告 `fina_indicator` 包含 `roe_dt`, `netprofit_yoy`, `debt_to_assets` |
+| 质量 | `roe_dt >= 2` |
+| 利润趋势 | `netprofit_yoy >= -20` |
+| 杠杆 | `debt_to_assets <= 75` |
+| 过热硬区间 | `bias_60d` 在 `[-0.20, 0.80]`，`vr_60d` 在 `[0.40, 4.00]` |
+| 估值有效性 | `pe_ttm > 0` 且 `pb > 0` |
 
-Every gate writes a `filter_log` row with before, after, and removed counts.
+每个门槛都写入一行 `filter_log`，包含筛选前、筛选后和移除数量。
 
-## Presets
+## 预设
 
-Positive factor weights sum to `1.0`; risk is a penalty, not a positive factor.
+正向因子权重合计为 `1.0`；风险是惩罚项，不是正向因子。
 
-| preset | trend | value | quality | growth | overheat | valuation percentile |
+| 预设 | trend | value | quality | growth | 过热 | 估值分位 |
 |---|---:|---:|---:|---:|---|---|
-| balanced | 0.20 | 0.30 | 0.25 | 0.25 | medium | medium |
-| value | 0.10 | 0.45 | 0.30 | 0.15 | medium | strong |
-| growth | 0.20 | 0.15 | 0.25 | 0.40 | medium | weak but kept |
-| prosperity | 0.30 | 0.10 | 0.20 | 0.40 | strong | weak but kept |
+| balanced | 0.20 | 0.30 | 0.25 | 0.25 | 中 | 中 |
+| value | 0.10 | 0.45 | 0.30 | 0.15 | 中 | 强 |
+| growth | 0.20 | 0.15 | 0.25 | 0.40 | 中 | 弱但保留 |
+| prosperity | 0.30 | 0.10 | 0.20 | 0.40 | 强 | 弱但保留 |
 
-`balanced` is the default and is intentionally value-led to avoid pure momentum chasing.
+`balanced` 是默认预设，并刻意以 value 为主导，以避免纯动量追高。
 
-## Custom Rule Overlay
+## 自定义规则叠加层
 
-Use a custom overlay when the market regime makes the fixed preset incomplete. Examples:
+当市场状态让固定预设不完整时，使用自定义叠加层。示例：
 
-| Market condition | Possible custom rule |
+| 市场条件 | 可能的自定义规则 |
 |---|---|
-| Falling rates / liquidity easing | allow higher quality-growth tilt, but keep valuation percentile penalty |
-| Tight liquidity / risk-off | raise quality, cash-flow, dividend, and liquidity requirements |
-| Commodity upcycle | add commodity-price sensitivity and inventory/cash-flow checks |
-| Policy-supported industry | add catalyst evidence, policy date, and beneficiary logic |
-| War, sanctions, tariffs, or export controls | exclude or flag exposed supply chains; require source-backed event risk |
-| Crowded theme / speculative surge | tighten overheat, valuation percentile, turnover, and drawdown filters |
+| 降息 / 流动性宽松 | 允许更高质量-成长倾斜，但保留估值分位惩罚 |
+| 流动性收紧 / 避险 | 提高质量、现金流、股息和流动性要求 |
+| 大宗商品上行周期 | 加入商品价格敏感性和库存/现金流检查 |
+| 政策支持行业 | 加入催化证据、政策日期和受益逻辑 |
+| 战争、制裁、关税或出口管制 | 排除或标记暴露供应链；要求有来源支持的事件风险 |
+| 拥挤主题 / 投机性上涨 | 收紧过热、估值分位、换手率和回撤过滤 |
 
-Custom overlays can adjust:
+自定义叠加层可以调整：
 
-- factor weights or preset choice
-- hard-gate thresholds
-- industry caps or industry inclusion/exclusion
-- catalyst inputs
-- risk penalties and concentration limits
+- 因子权重或预设选择
+- 硬门槛阈值
+- 行业上限或行业纳入/排除
+- 催化输入
+- 风险惩罚和集中度限制
 
-Rules:
+规则：
 
-- Write the market-regime diagnosis and custom rules before final ranking.
-- Keep a baseline `balanced` or relevant preset export for comparison.
-- Do not disable anti-chasing controls by default.
-- Do not restore stocks that fail safety gates unless the user explicitly asks for distressed or special-situation research.
-- Mark custom outputs with the rule name, source timestamp, and bias risk.
+- 在最终排序前写出市场状态诊断和自定义规则。
+- 保留 `balanced` 或相关预设的基线导出用于比较。
+- 默认不要关闭抗追高控制。
+- 除非用户明确要求困境或特殊情景研究，否则不要恢复未通过安全门槛的股票。
+- 在自定义输出中标明规则名称、来源时间戳和偏差风险。
 
-## Penalties
+## 惩罚项
 
-- 过热惩罚: positive `bias_60d` beyond the healthy band and excessive `vr_60d`; capped before it dominates the model.
-- 估值分位惩罚: high `pe_pctl_ind` or own-history percentile without growth support. Strongest in `value`, weakest in `growth` and `prosperity`, but never disabled.
-- 风险惩罚: large drawdown or volatility proxy.
+- 过热惩罚：正向 `bias_60d` 超出健康区间，或 `vr_60d` 过高；在其主导模型前设置上限。
+- 估值分位惩罚：`pe_pctl_ind` 较高，或缺乏成长支撑的自身历史分位较高。该惩罚在 `value` 中最强，在 `growth` 和 `prosperity` 中最弱，但绝不关闭。
+- 风险惩罚：大回撤或波动率代理指标。
 
-Any overheat or valuation percentile penalty sets `追涨风险 = 是` and records the reason in `disqualify_risk`.
+任何过热或估值分位惩罚都会设置 `追涨风险 = 是`，并在 `disqualify_risk` 中记录原因。
 
-## Catalyst Contract（催化）
+## Catalyst 约定（催化）
 
-`--with-catalyst` is optional and off by default.
+`--with-catalyst` 是可选项，默认关闭。
 
-Allowed input is a bounded CSV/XLSX for gate survivors or preliminary top names:
+允许的输入是针对门槛幸存标的或初步头部标的的有界 CSV/XLSX：
 
 ```text
 ts_code,catalyst_score,catalyst_source,catalyst_time
 ```
 
-Rules:
+规则：
 
-- `catalyst_score` is clipped to `[0,1]`.
-- catalyst adds a 15% positive component only after gates and penalties.
-- catalyst cannot restore eliminated stocks.
-- missing catalyst is neutral (`0.5`) when enabled and absent (`0.0`) when disabled.
-- AI must cite source and time when it creates catalyst inputs.
+- `catalyst_score` 会被截断到 `[0,1]`。
+- catalyst 只在门槛和惩罚之后增加 15% 正向成分。
+- catalyst 不能恢复已淘汰股票。
+- 启用但缺失 catalyst 时为中性 (`0.5`)；未启用时为缺席 (`0.0`)。
+- AI 创建 catalyst 输入时必须引用来源和时间。
 
-## Output Requirements
+## 输出要求
 
-The shortlist must include factor breakdown, penalties, `composite_score`, `style_preset`, `追涨风险`, `pass_reason`, `disqualify_risk`, and `next_step`.
+短名单必须包含因子拆解、惩罚项、`composite_score`、`style_preset`、`追涨风险`、`pass_reason`、`disqualify_risk` 和 `next_step`。

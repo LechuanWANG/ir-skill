@@ -1,59 +1,59 @@
-# Fundamental Research
+# 基本面研究
 
-Use this reference for single-company business and financial analysis.
+单家公司业务和财务分析使用本参考资料。
 
-## Business Quality
+## 生意质量
 
-Answer in plain language:
+用大白话回答：
 
-- What does the company sell?
-- Who pays, and why?
-- Why might customers keep paying?
-- What would a well-funded competitor need to copy it?
-- Is the moat widening, stable, or shrinking?
+- 公司卖什么？
+- 谁付钱，为什么付？
+- 客户为什么可能持续付钱？
+- 资金充足的竞争对手要复制它，需要什么条件？
+- 护城河是在扩大、稳定，还是收缩？
 
-## Financial Quality
+## 财务质量
 
-Review:
+复核：
 
-- revenue and profit trend
-- margin quality
-- ROE and leverage
-- cash conversion if data is available
-- capital allocation: dividends, buybacks, M&A, reinvestment
+- 收入和利润趋势
+- 利润率质量
+- ROE 和杠杆
+- 数据可得时，复核现金转化
+- 资本配置：分红、回购、并购、再投资
 
-Use scripts for calculations and mark missing fields explicitly.
+计算使用脚本，并明确标记缺失字段。
 
-## Management
+## 管理层
 
-Assess:
+评估：
 
-- incentives and ownership
-- history of major decisions
-- treatment of minority shareholders
-- communication consistency
-- governance risks
+- 激励和持股
+- 重大决策历史
+- 对中小股东的态度
+- 沟通一致性
+- 治理风险
 
-## A-Share Announcement Event Scan
+## A 股公告事件扫描
 
-For A-share company research, scan recent CNInfo announcements, normally the latest 6-12 months. Classify material events:
+A 股公司研究时，扫描近期巨潮资讯公告，通常看最近 6-12 个月。分类重大事件：
 
-- shareholder reduction or management reduction
-- equity incentive, restricted stock, stock option, or employee stock ownership plan
-- buyback, cancellation, dividend, or other capital return
-- M&A, asset purchase, restructuring, or private placement
-- related-party transaction or joint investment with related parties
-- convertible bond redemption, forced redemption, or delisting
-- regulatory inquiry, litigation, pledge, guarantee, accounting correction, or restatement
+- 股东减持或管理层减持
+- 股权激励、限制性股票、股票期权或员工持股计划
+- 回购、注销、分红或其他资本回报
+- 并购、资产购买、重组或定增
+- 关联交易或与关联方共同投资
+- 可转债赎回、强赎或退市
+- 监管问询、诉讼、质押、担保、会计差错更正或重述
 
-Material governance, dilution, related-party, or cash-use events must affect the action label, risk section, and buy-before-verification conditions. Announcement titles are leads; consequential events require reading the original filing before relying on the conclusion.
+重大的治理、摊薄、关联方或现金使用事件，必须影响行动标签、风险部分和买入前验证条件。公告标题只是线索；重要事件必须阅读原始披露后，才能依赖结论。
 
-## Red Flags
+## 红旗
 
-Escalate or avoid when there is evidence of:
+出现以下证据时，升级处理或回避：
 
-- accounting uncertainty
-- governance or integrity concerns
-- structurally declining industry economics
-- high leverage with weak cash generation
-- thesis requiring many optimistic assumptions at once
+- 会计不确定性
+- 治理或诚信问题
+- 行业经济性结构性下行
+- 高杠杆且现金生成弱
+- 投资假设同时依赖太多乐观假设
