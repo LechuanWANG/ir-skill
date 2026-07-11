@@ -1,26 +1,179 @@
-# 技术筛选
+# 技术面、流动性与抗追高
 
-从本地 SQLite 市场数据存储进行 A 股筛选时，使用本参考资料。
+本文件支持两个独立任务：全市场可复现多因子降维，以及长期准入后的候选买点检查。技术面不判断公司是否值得长期持有；阶段和行动以 `research-screening.md` 为唯一真源。
 
-## 工作流
+## 目录
 
-1. 使用 `scripts/tushare_sync.py` 确认或更新 `data/investment_research.sqlite`。
-2. 同步价格/成交量和因子输入：`--daily-basic`、`--fina-indicator` 和 `--stock-basic`。
-3. 当政策、利率、流动性、战争/冲突、大宗商品、行业监管、市场风格和风险偏好可能影响筛选时，刷新当前宏观/市场背景。
-4. 在排序结果前选择筛选方案：
-   - 默认基线：用一个预设运行 `scripts/factor_screen.py`。
-   - 自定义市场状态叠加层：应用前先定义额外过滤器、因子倾斜、行业纳入/排除、catalyst 字段或风险上限。
-5. 运行 `scripts/factor_screen.py` 生成可复现基线。`scripts/technical_screen.py` 只作为原始技术指标层或诊断工具。
-6. 将任何预注册自定义叠加层应用于基线导出或幸存标的集合；保留基线排名用于比较。
-7. 让 AI 以怀疑者身份复核短名单：解释动量为什么存在、估值是否拉伸、设置是否可持续、什么会证伪。
-8. 将候选转化为研究任务，不要转化为自动买入指令。
+- 路由与三种追高
+- 长期价格状态与机会成本
+- 确定性指标契约
+- 行动映射与量化基线
 
-示例：
+## 路由
+
+### 已有候选或持仓
+
+先完成阶段 L，再使用 `timing-liquidity` 数据判断：
+
+```text
+长期准入通过
+-> 估值追高
+-> 价格追高
+-> 叙事追高
+-> 流动性与退出能力
+-> entry_action 建议
+```
+
+### 没有候选池
+
+没有候选并不等于先跑技术面。默认先建立长期基本面研究池：
+
+```text
+全市场基础数据
+-> 估值、财务质量、增长、资产负债表与历史覆盖
+-> long_term_status = not_evaluated
+-> 逐只阶段 L
+-> 只有 passed 才加载技术/流动性
+```
+
+使用 `scripts/fundamental_pool.py`，其输入不包含日线、成交量、动量、均线、回撤或量比。它输出的是待做阶段 L 的研究任务，不是买入列表。
+
+### 明确要求全市场量化降维
+
+只有用户明确要求多因子、量化初筛、动量或技术面筛选时，才运行：
+
+```text
+全市场基础层
+-> 硬风险门槛
+-> 可复现因子基线
+-> 行业集中度
+-> 研究池
+-> 逐只阶段 L
+```
+
+筛选结果是研究任务，不是买入列表。已有主题、持仓、公司名单或事件线索时，不重复运行全市场技术筛选。
+
+每个幸存候选都要指定后续研究 profile；默认进入 `long-term-quality + risk-review`，而不是沿用技术排名。
+
+## 三种追高检查
+
+### 估值追高
+
+- 当前 PE/PB/PS/FCF 收益率在自身历史和可比公司中的分位。
+- 估值扩张是否有盈利预测、ROIC、利润率或长期价值区间同步上修支持。
+- 当前价格隐含的增长和利润率是否超过行业容量与公司历史。
+- 催化后市值增加是否显著超过可合理估计的利润或现金流增量。
+
+### 价格追高
+
+- 20/60 日绝对收益及相对行业、市场收益分位。
+- 价格相对中期趋势的 ATR/波动率调整偏离。
+- 跳空、连续涨停、加速斜率和事件后上涨集中度。
+- 成交量、换手率、融资余额、龙虎榜、筹码集中度和大宗交易是否进入极端分位。
+
+### 叙事追高
+
+- 政策、订单、产品或行业传闻是否完成官方核实。
+- 是否映射具体 `thesis_id`、财务指标、量级和持续时间。
+- 公司是直接受益、间接受益还是概念关联。
+- 价格是否已先于证据反映最乐观情景。
+
+相对分位和波动率调整是主要判断。统一固定阈值只能作为数据异常、不可交易或极端风险的宽松兜底，不能替代自身历史和横向比较。
+
+## 长期价格状态与机会成本
+
+“没有追高”不等于“值得买”。阶段 N 对长期候选额外判断价格是否把盈利增长转化为股东回报：
+
+```text
+至少 500 个前复权交易日
+-> 1/3 年价格与股东总回报
+-> 相对市场与行业收益
+-> 250 日趋势斜率、效率比、区间占用率
+-> 突破失败率与估值倍数变化
+-> 盈利/现金流增长、分红贡献和机会成本
+-> price_regime + opportunity_cost_flag
+```
+
+- 少于 500 个前复权交易日时，`price_regime = insufficient_history`，不得声称长期横盘、上升或下降。
+- `range_bound` 只是价格事实。盈利与现金流增长、分红提供回报且估值压缩时可解释为 `range_bound_value_candidate`；盈利或现金流恶化时标为 `range_bound_value_trap_risk`。
+- 股东总回报优先使用复权价格；同时展示未复权价格变化与已实施现金分红，避免把价格横盘误写成零回报。
+- 机会成本以可配置年化回报门槛和相对基准为依据。若长期回报主要依赖分红而缺少重估催化，要在行动卡中明确。
+
+## 确定性指标契约
+
+可得时由脚本计算，缺失时明确标记：
+
+```text
+as_of
+close_qfq
+valuation_percentile_self
+valuation_percentile_peer
+return_20d
+return_60d
+relative_return_market_20d
+relative_return_market_60d
+relative_return_industry_20d
+relative_return_industry_60d
+atr_14
+atr_deviation
+bias_60d
+turnover_percentile
+volume_ratio_percentile
+margin_balance_change
+crowding_percentile
+max_drawdown
+realized_volatility
+average_daily_turnover
+position_liquidity_days
+data_completeness
+actual_window
+long_history_status
+price_regime
+price_regime_interpretation
+annualized_adjusted_return_long
+total_shareholder_return_3y
+annualized_total_shareholder_return_3y
+cash_dividend_per_share_3y
+pe_ttm_change_3y
+long_efficiency_ratio
+long_range_occupancy_15pct
+ma250_annualized_slope
+breakout_failure_rate
+opportunity_cost_flag
+opportunity_cost_reason
+overheat_flags[]
+data_timestamp
+```
+
+- `position_liquidity_days` 需要计划仓位；用户未提供时只报告市场流动性，不伪造仓位容量。
+- 自身历史估值不足 3 年时，使用行业分位或较短窗口并标记回退口径。
+- 长期价格状态不能回退到 60/120 日窗口；不足 500 个前复权交易日时只能输出历史不足。
+- 计算使用前复权价格和同一 `as_of`，避免未来数据。
+- `research_workflow.py current-assess` 优先使用显式输入；未提供市场/行业横截面、同行估值或候选价格序列时，会从同一 SQLite 的全市场基础层自动生成。缓存仍不足时保留缺失项并输出 `wait_evidence`，不回退成固定技术筛选。
+
+## 行动映射
+
+| 条件 | 默认建议 |
+|---|---|
+| 长期通过、赔率合理、不过热、流动性充足 | 可以进入 `staged_buy` 综合判断 |
+| 估值或价格进入极端分位，盈利未同步上修 | `wait_price` |
+| 事件未核实、量级不可测或关键技术数据缺失 | `wait_evidence` |
+| 无法以合理价格建立/退出，或下行风险不可接受 | `avoid` |
+| 长期不通过但技术突破 | 仍为 `avoid` |
+
+长期区间震荡且年化股东回报低于门槛时，即使没有过热，也要记录 `opportunity_cost_flag`。它不自动否决公司，但必须进入基准情景、现金比较和替代成本。
+
+触发警示后给出可执行复核条件，例如回到合理估值区间、ATR 偏离消化、成交拥挤回落、盈利预测上修或官方证据补齐。不要只说“等回调”。
+
+## 全市场量化基线
+
+只有明确请求该量化方法时：
 
 ```bash
 python3 scripts/tushare_sync.py 20250101 20260630 --db-path data/investment_research.sqlite
 python3 scripts/tushare_sync.py 20250101 20260630 --db-path data/investment_research.sqlite --daily-basic --fina-indicator --stock-basic
 python3 scripts/factor_screen.py \
+  --explicit-quantitative-baseline \
   --db-path data/investment_research.sqlite \
   --as-of 20260630 \
   --preset balanced \
@@ -29,72 +182,16 @@ python3 scripts/factor_screen.py \
   --output outputs/screens/factor_screen_20260630.csv
 ```
 
-下载的市场数据应保存在 SQLite。CSV/XLSX 只用于最终筛选导出、人工提供的增强数据或有界 catalyst 输入。
+下载数据留在 SQLite；CSV/XLSX 只作为最终导出或有界增强输入。
 
-## 自定义市场状态筛选
+自定义筛选规则必须在查看最终标的前登记，并保留默认基线用于比较。可以调整市场风格、行业范围、风险门槛和研究优先级，但不能关闭 ST/退市、关键数据缺失、严重流动性和极端风险门槛，也不能只按近期涨幅排序。
 
-随附代码是起点，不是刚性要求。用户的参考代码和本地脚本提供可复用因子；当当前市场状态让默认预设不完整时，筛选负责人可以定义自定义规则。
+## AI 复核边界
 
-自定义规则可用于：
+AI 可以解释上涨来源、比较估值与拥挤分位、提出证伪条件、调整研究顺序或建议等待。AI 不得：
 
-- 市场风格：价值、股息、成长、中小盘、大盘质量、周期反弹、防御性现金流
-- 宏观敏感性：利率、流动性、汇率、大宗商品、财政政策、产业政策、地缘政治
-- 行业聚焦或排除：政策支持行业、拥挤主题、制裁/出口管制暴露、大宗商品链
-- 风险控制：更严格的回撤、换手率、估值分位、杠杆、质押、流动性或集中度限制
-- 催化叠加层：盈利拐点、回购、政策批准、订单周期、价格周期触发、行业产能退出
-
-护栏：
-
-- 在查看或重排最终标的前，预先登记自定义规则。
-- 除非用户明确要求特殊情景研究，否则保留对 ST/退市、关键数据缺失、极端过热、非正估值指标和严重流动性问题的硬排除。
-- 绝不只按近期涨幅排序；保持估值和过热惩罚可见。
-- 将自定义结果与基线预设比较，并解释主要差异。
-- 输出自定义规则集、市场状态理由、来源时间戳和已知偏差风险。
-
-## 多因子流程（多因子 + 抗追高）
-
-筛选路径是：
-
-```text
-全市场股票池
--> 硬门槛
--> trend/value/quality/growth 分数
--> 过热、估值分位和风险惩罚
--> 预设综合分
--> 行业集中度上限
--> 带因子拆解和追涨风险标签的短名单
--> AI 对抗性复核
-```
-
-脚本不得只按近期涨幅给最终候选排序。动量只是输入；估值分位和过热控制是明确的抗追高检查。
-
-## 指标
-
-原始技术层计算：
-
-- 前复权价格
-- 用于因子筛选的 60 日 bias、年化 Sharpe 和 volume ratio
-- `factor_screen.py` 中的 12-1 momentum
-- 最大回撤
-- 完整度和实际窗口
-
-因子层增加：
-
-- 行业相对估值分位
-- 质量和成长分位
-- 硬门槛 `filter_log`
-- `trend_score`, `value_score`, `quality_score`, `growth_score`
-- `overext_penalty`, `valuation_pctl_penalty`, `risk_penalty`
-- `composite_score`, `style_preset` 和 `追涨风险`
-
-## AI 复核
-
-在确定性短名单之后，AI 复核入围标的。它只能基于理由否决或重排候选：
-
-- 为什么上涨：基本面、情绪、流动性或一次性事件
-- 用分位证据判断估值是否拉伸
-- 趋势是否可以延续
-- 证伪条件
-- 是否需要更深的单只股票研究
-
-AI 复核不能覆盖硬门槛，也不能编造缺失因子数据。
+- 覆盖确定性硬门槛。
+- 编造缺失指标。
+- 把趋势延续当作长期价值证据。
+- 用技术综合分输出 `staged_buy`。
+- 在过热时因“怕错过”取消价格和流动性检查。

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Deterministic multi-factor A-share screening.
+"""Explicit deterministic quantitative A-share baseline.
 
-This layer narrows the universe and explains factor evidence. It does not make
-buy/sell decisions; AI review happens after this shortlist is produced.
+This optional branch narrows the universe with technical and fundamental factors.
+It is never the default candidate-discovery path and does not make buy/sell decisions.
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ OUTPUT_COLUMNS = [
     "name",
     "industry",
     "market",
+    "candidate_source",
     "close",
     "total_mv_100m",
     "pe_ttm",
@@ -77,13 +78,22 @@ OUTPUT_COLUMNS = [
     "overext_penalty",
     "valuation_pctl_penalty",
     "risk_penalty",
-    "catalyst_score",
+    "base_factor_score",
     "composite_score",
+    "catalyst_score",
+    "research_priority_overlay",
+    "research_priority_rank",
+    "priority_reason",
+    "catalyst_source",
+    "catalyst_time",
+    "catalyst_signal_id",
     "style_preset",
     "追涨风险",
     "pass_reason",
     "disqualify_risk",
+    "long_term_status",
     "next_step",
+    "as_of",
 ]
 
 
@@ -229,14 +239,66 @@ def _penalty_risk(frame: pd.DataFrame) -> pd.Series:
 
 def _ensure_catalyst(frame: pd.DataFrame, catalyst: pd.DataFrame | None, with_catalyst: bool) -> pd.DataFrame:
     result = frame.copy()
+    catalyst_output_columns = [
+        "catalyst_score",
+        "catalyst_source",
+        "catalyst_time",
+        "catalyst_signal_id",
+        "research_priority_overlay",
+        "priority_reason",
+        "_catalyst_present",
+    ]
+    result = result.drop(columns=[column for column in catalyst_output_columns if column in result.columns])
     if with_catalyst and catalyst is not None and not catalyst.empty:
+        required_columns = {"ts_code", "catalyst_score"}
+        missing_columns = sorted(required_columns - set(catalyst.columns))
+        if missing_columns:
+            raise ValueError(f"Catalyst input missing required columns: {', '.join(missing_columns)}")
+
+        metadata_columns = ["catalyst_source", "catalyst_time", "catalyst_signal_id"]
         catalyst_frame = catalyst[["ts_code", "catalyst_score"]].copy()
-        result = result.merge(catalyst_frame, on="ts_code", how="left")
-        result["catalyst_score"] = pd.to_numeric(result["catalyst_score"], errors="coerce").fillna(0.5).clip(0, 1)
-    elif with_catalyst:
-        result["catalyst_score"] = 0.5
-    else:
+        for column in metadata_columns:
+            catalyst_frame[column] = catalyst[column] if column in catalyst.columns else pd.NA
+
+        numeric_score = pd.to_numeric(catalyst_frame["catalyst_score"], errors="coerce")
+        invalid_score = catalyst_frame["catalyst_score"].notna() & numeric_score.isna()
+        if invalid_score.any():
+            raise ValueError("Catalyst input contains non-numeric catalyst_score values")
+        catalyst_frame["catalyst_score"] = numeric_score.fillna(0.0).clip(0, 1)
+        catalyst_frame["ts_code"] = catalyst_frame["ts_code"].astype(str)
+        catalyst_frame = (
+            catalyst_frame.sort_values("catalyst_score", ascending=False, kind="stable")
+            .drop_duplicates("ts_code", keep="first")
+            .reset_index(drop=True)
+        )
+        catalyst_frame["_catalyst_present"] = True
+        result["ts_code"] = result["ts_code"].astype(str)
+        result = result.merge(catalyst_frame, on="ts_code", how="left", validate="many_to_one")
+
+    for column in ["catalyst_source", "catalyst_time", "catalyst_signal_id"]:
+        if column not in result.columns:
+            result[column] = pd.NA
+    if "catalyst_score" not in result.columns:
         result["catalyst_score"] = 0.0
+    result["catalyst_score"] = pd.to_numeric(result["catalyst_score"], errors="coerce").fillna(0.0).clip(0, 1)
+    if "_catalyst_present" not in result.columns:
+        result["_catalyst_present"] = False
+    result["_catalyst_present"] = result["_catalyst_present"].fillna(False).astype(bool)
+    result["research_priority_overlay"] = result["catalyst_score"] if with_catalyst else 0.0
+
+    def priority_reason(row: pd.Series) -> str:
+        if not with_catalyst:
+            return "baseline_only"
+        if not row["_catalyst_present"]:
+            return "no_catalyst_signal"
+        details = [f"catalyst_score={row['catalyst_score']:.2f}"]
+        for column in ["catalyst_source", "catalyst_time", "catalyst_signal_id"]:
+            value = row.get(column)
+            if pd.notna(value) and str(value).strip():
+                details.append(f"{column}={value}")
+        return "; ".join(details)
+
+    result["priority_reason"] = result.apply(priority_reason, axis=1)
     return result
 
 
@@ -252,7 +314,7 @@ def score_candidates(
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
     preset_config = PRESETS[preset]
-    result = frame.copy()
+    result = frame.copy().reset_index(drop=True)
     numeric_columns = [
         "close",
         "total_mv",
@@ -326,10 +388,9 @@ def score_candidates(
     result["valuation_pctl_penalty"] = np.where(unsupported_expensive, preset_config.valuation_penalty, 0.0)
 
     weighted = sum(result[f"{factor}_score"] * weight for factor, weight in preset_config.weights.items())
-    if with_catalyst:
-        weighted = weighted * 0.85 + result["catalyst_score"] * 0.15
+    result["base_factor_score"] = (weighted * 100).round(4)
     result["composite_score"] = (
-        weighted * 100
+        result["base_factor_score"]
         - result["overext_penalty"]
         - result["valuation_pctl_penalty"]
         - result["risk_penalty"]
@@ -362,18 +423,21 @@ def score_candidates(
 
     result["pass_reason"] = pass_reasons
     result["disqualify_risk"] = risk_reasons
-    result["next_step"] = "AI复核：逻辑链 + 三情景；大额/重仓再进入 deep research"
+    result["candidate_source"] = "factor_baseline"
+    result["long_term_status"] = "not_evaluated"
+    result["next_step"] = "stage_L"
+    result["as_of"] = pd.NA
 
     for column in OUTPUT_COLUMNS:
         if column not in result.columns:
             result[column] = pd.NA
-    return result.sort_values("composite_score", ascending=False).reset_index(drop=True)
+    return result.sort_values(["composite_score", "ts_code"], ascending=[False, True], kind="stable").reset_index(drop=True)
 
 
 def apply_industry_cap(frame: pd.DataFrame, *, top: int = 50, industry_cap: float = 0.25) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
-    ordered = frame.sort_values("composite_score", ascending=False).reset_index(drop=True)
+    ordered = frame.sort_values(["composite_score", "ts_code"], ascending=[False, True], kind="stable").reset_index(drop=True)
     if industry_cap >= 1:
         return ordered.head(top).reset_index(drop=True)
 
@@ -389,6 +453,22 @@ def apply_industry_cap(frame: pd.DataFrame, *, top: int = 50, industry_cap: floa
         if len(selected_rows) >= top:
             break
     return pd.DataFrame(selected_rows).reset_index(drop=True)
+
+
+def order_research_priority(frame: pd.DataFrame, *, with_catalyst: bool = False) -> pd.DataFrame:
+    result = frame.copy()
+    if result.empty:
+        result["research_priority_rank"] = pd.Series(dtype="Int64")
+        return result
+
+    sort_columns = ["composite_score", "ts_code"]
+    ascending = [False, True]
+    if with_catalyst:
+        sort_columns.insert(0, "research_priority_overlay")
+        ascending.insert(0, False)
+    result = result.sort_values(sort_columns, ascending=ascending, kind="stable").reset_index(drop=True)
+    result["research_priority_rank"] = pd.Series(range(1, len(result) + 1), dtype="Int64")
+    return result
 
 
 def build_factor_screen(
@@ -419,7 +499,9 @@ def build_factor_screen(
         with_catalyst=with_catalyst,
         catalyst=catalyst,
     )
-    return apply_industry_cap(scored[OUTPUT_COLUMNS], top=top, industry_cap=industry_cap), filter_log
+    scored["as_of"] = as_of
+    selected = apply_industry_cap(scored[OUTPUT_COLUMNS], top=top, industry_cap=industry_cap)
+    return order_research_priority(selected, with_catalyst=with_catalyst)[OUTPUT_COLUMNS], filter_log
 
 
 def read_catalyst_table(path: Path) -> pd.DataFrame:
@@ -437,7 +519,9 @@ def write_screen(frame: pd.DataFrame, output: Path) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build deterministic multi-factor A-share shortlist.")
+    parser = argparse.ArgumentParser(
+        description="Build an explicitly requested quantitative research baseline; not a default or buy-list screen."
+    )
     parser.add_argument("--db-path", default=DEFAULT_DB_PATH, type=Path)
     parser.add_argument("--as-of", required=True, help="Screening date, YYYYMMDD or YYYY-MM-DD")
     parser.add_argument("--start-date", help="Optional price start date. Defaults to all data up to --as-of.")
@@ -446,13 +530,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--industry-cap", type=float, default=0.25)
     parser.add_argument("--with-catalyst", action="store_true")
-    parser.add_argument("--catalyst-input", type=Path, help="Optional CSV/XLSX with ts_code,catalyst_score for survivor reranking.")
+    parser.add_argument(
+        "--explicit-quantitative-baseline",
+        action="store_true",
+        help="Required acknowledgement that this technical/multi-factor baseline is explicitly requested.",
+    )
+    parser.add_argument(
+        "--catalyst-input",
+        type=Path,
+        help="Optional CSV/XLSX with ts_code,catalyst_score for survivor research-priority ordering only.",
+    )
     parser.add_argument("--output", required=True, type=Path)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.explicit_quantitative_baseline:
+        parser.error(
+            "factor_screen is an explicit quantitative baseline. Use fundamental_pool for default long-term candidate discovery."
+        )
     catalyst = read_catalyst_table(args.catalyst_input) if args.catalyst_input else None
     screen, filter_log = build_factor_screen(
         db_path=args.db_path,
