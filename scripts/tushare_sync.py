@@ -39,6 +39,8 @@ FINA_INDICATOR_FIELDS = (
     "netprofit_yoy,or_yoy,debt_to_assets,current_ratio,quick_ratio,ocf_to_or,bps,eps"
 )
 STOCK_BASIC_FIELDS = "ts_code,name,industry,market,list_date"
+DEFAULT_ENV_PATH = Path(".env")
+_BUNDLED_PROJECT_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 
 
 @dataclass(frozen=True)
@@ -54,11 +56,42 @@ class SyncConfig:
     stock_basic: bool = False
 
 
-def get_tushare_token(env: Mapping[str, str] | None = None) -> str:
-    token = (env or os.environ).get("TUSHARE_TOKEN", "").strip()
+def _read_env_value(path: Path, key: str) -> str:
+    if not path.is_file():
+        return ""
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() == key:
+            return value.strip().strip("\"'")
+    return ""
+
+
+def get_tushare_token(
+    env: Mapping[str, str] | None = None,
+    *,
+    env_path: Path | None = None,
+) -> str:
+    source = os.environ if env is None else env
+    token = source.get("TUSHARE_TOKEN", "").strip()
+    if not token and env is None:
+        paths = [Path(env_path)] if env_path else [Path.cwd() / DEFAULT_ENV_PATH, _BUNDLED_PROJECT_ENV_PATH]
+        for path in dict.fromkeys(paths):
+            token = _read_env_value(path, "TUSHARE_TOKEN")
+            if token:
+                break
+        if token:
+            os.environ["TUSHARE_TOKEN"] = token
     if not token:
-        raise RuntimeError("TUSHARE_TOKEN is required; do not hard-code TuShare tokens.")
+        raise RuntimeError("TUSHARE_TOKEN is required in the environment or the project-local .env file.")
     return token
+
+
+def create_tushare_client():
+    token = get_tushare_token()
+    return _load_tushare().pro_api(token)
 
 
 def chunk_date_range(start_date: str, end_date: str, days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK) -> list[tuple[str, str]]:

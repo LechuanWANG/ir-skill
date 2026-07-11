@@ -1,3 +1,4 @@
 .DS_Store
+.codebase-memory/
 __pycache__/
 *.py[cod]
