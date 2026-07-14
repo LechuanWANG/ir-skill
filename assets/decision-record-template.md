@@ -1,70 +1,37 @@
-# 决策记录
-
 ---
-type: decision
-decision_id:
-previous_decision_id:
-decision_change: new
-change_reasons: []
-methodology_change: false
-thesis_id:
+type: investment-research-note
 date:
 as_of:
-status: active
-confidence: medium
-research_status: decision_ready
-long_term_status:
-entry_action:
-portfolio_action:
-reference_price:
-acceptable_price_range:
-blocking_evidence: []
-confidence_limiters: []
-monitoring_items: []
-price_regime:
-total_shareholder_return_3y:
-opportunity_cost_assessment:
-next_validation_date:
-tags: [investment, decision]
+symbols: []
+tags: [investment, research]
 ---
 
-## PM 裁决
+# 研究记录
 
-- 今天最优行动 / 现金比较 / 最接近买入对象：
-- 相对上次：`new / unchanged / changed / methodology_rebase`
-- 长期准入：`passed / needs_evidence / rejected`
-- 当前行动：`staged_buy / wait_price / wait_evidence / avoid`
-- 持仓行动：`not_applicable / add / hold / reduce / exit`
+> 仅在用户要求单独输出或保存这份研究记录时使用。字段可按内容增删；不要为了符合模板虚构状态、价格或结论。无论是否使用该模板，除非用户明确禁止写入，本轮可复用资料与结论仍应整合进 LLM Wiki。
 
-## 长期投资假设
+## 问题与结论
 
-### 3–5 年收益来源
+- 本次问题：
+- 当前判断及其适用条件：
+- 与此前记录的关系（如有）：
 
-### 核心假设与验证指标
+## 假设与证据
 
-### 支持 / 反方证据
+- 关键假设：
+- 支持证据：
+- 反方证据 / 未知项：
+- 来源快照：
 
-## 当前买点评估
+## 条件、风险与复核
 
-### 事件、宏观与行业
+- 价格、事件或组合条件（如适用）：
+- 证伪条件 / 最大风险：
+- 下一次验证触发器：
 
-### 三情景与可接受价格
+## Wiki 整合说明
 
-### 技术、流动性和三类追高
-
-### 三年价格状态、股东总回报、估值变化与机会成本
-
-## 行动与等待条件
-
-## 最大风险与证伪
-
-## 阻断证据、置信度限制项与持续监测项
-
-## 来源快照
-
-## 后续跟进
-
-- 下一验证日期：
-- 20 日评估：
-- 60 日评估：
-- 120 日评估：
+- 新资料与来源角色：
+- 已更新的关联页面：
+- 保留的矛盾或未整合问题：
+- 是否包含敏感信息：

@@ -1,64 +1,35 @@
 # 组合与投资假设
 
-持仓、仓位测算和投资假设跟踪使用本参考资料。长期准入和当前行动枚举以 `research-screening.md` 为唯一真源。
-
-## 先读
-
-给组合建议前，先读：
-
-- `docs/investment-llm-wiki/profile.md`
-- `docs/investment-llm-wiki/portfolio.md`
-- `docs/investment-llm-wiki/index.md` 中相关的 `decision` 和 `analysis` 页面
-
-如果没有结构化组合，询问用户持仓，或在明确标记假设的前提下继续。写入持仓、资金或风险偏好前获得用户确认，除非本轮已明确授权。
+在用户询问持仓、仓位、组合风险或替代机会时使用。不要假定存在本地组合数据；只有用户明确要求复用或更新历史研究时才读取 LLM Wiki，只有用户明确提供或授权时才创建/更新 `portfolio.md`。需要归档公开资料时，直接使用 `raw/<domain>/<subject>/<YYYY-MM-DD>/<内容明确的文件名>`；只有启用 Wiki 时才整合到对应页面。
 
 ## 组合检查
 
-评估：
+根据问题和可用信息，考虑：
 
-- 最大持仓和前三大持仓集中度
-- 国家/币种/行业/主题集中度
-- 现金水平
-- 隐性相关性
-- 与当前最强想法相比的机会成本
-- 用户是否愿意以当前价格买入每个持仓
-- 每个持仓的退出流动性和计划仓位需要多少正常成交日
-- 新候选是否增加已有的行业、风格、久期、汇率或事件相关性
+- 单一持仓、前几大持仓、行业、主题、国家/币种和流动性的集中度。
+- 表面不同但可能共享的盈利、久期、商品、利率、汇率或政策风险。
+- 新候选相对现金和现有持仓的机会成本，而不是只看其自身吸引力。
+- 正常成交日、交易摩擦、税费和退出能力对实际可执行性的影响。
+- 用户是否愿意在当前条件下继续持有或增加每个风险敞口。
 
-## 投资假设健康度
+用户没有提供风险预算、目标、时间限制和持仓规模时，不要伪造精确仓位。可以说明不同风险预算下需要权衡的变量，或列出需要补充的信息。
 
-对每个持仓分别记录：
+## 跟踪假设
+
+为重要持仓或研究对象按需保留：
 
 ```text
-thesis_id
-long_term_status = passed / needs_evidence / rejected
-entry_action = staged_buy / wait_price / wait_evidence / avoid
-portfolio_action = add / hold / reduce / exit
-original_thesis
-return_sources_3_5y
-supporting_evidence[]
-contrary_evidence[]
-falsification_conditions[]
-acceptable_price_range
-portfolio_role
-concentration_and_correlation_effect
-liquidity_and_exit_risk
-next_validation_date
+working_thesis
+value_sources
+supporting_and_contrary_evidence
+material_risks_and_falsifiers
+current_price_or_valuation_conditions
+portfolio_role_and_overlap
+next_validation_trigger
 ```
 
-- `entry_action` 回答当前价格是否值得增加风险；`portfolio_action` 回答已有仓位如何处理，两者可以不同。
-- 长期通过但价格过热时，通常 `wait_price + hold`，不因长期看好自动加仓。
-- 长期证伪或客观红线时，说明 `reduce/exit` 的执行风险和节奏；不要用技术反弹覆盖长期结论。
-- 用户未给风险预算时，不伪造精确仓位。可以给风险预算框架、分批条件和需要补充的输入。
+将“长期逻辑是否仍成立”“现在是否应增加风险”“已有仓位如何处理”分别说明。它们可能给出不同答案；不要用一个通用标签掩盖差异。
 
-当建议会实质性改变仓位时，在用户确认后更新或创建 decision 页面，并登记 20/60/120 日评估日期。
+## 输出
 
-## 组合输出
-
-组合复盘至少展示：
-
-1. 当前组合的长期状态分布。
-2. `staged_buy / wait_price / wait_evidence / avoid` 候选与持仓。
-3. `add / hold / reduce / exit` 的已有持仓动作。
-4. 行业、风格、相关性、流动性、最大持仓和前三大持仓约束。
-5. 现金和替代成本，以及每个动作的触发条件。
+把结论写成条件化比较：当前选择、现金或替代选择、支持理由、主要反方风险、组合暴露变化和下一次复核触发器。将适合长期复用的公开研究记录写入相应角色页面；写入敏感持仓、资金或偏好前仍须获得明确授权。

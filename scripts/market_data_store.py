@@ -818,7 +818,7 @@ def write_fina_indicator(
     source: str = "tushare",
     retrieved_at: str | None = None,
 ) -> int:
-    """Upsert TuShare fina_indicator rows into SQLite."""
+    """Upsert supplementary TuShare financial-indicator rows into SQLite."""
     if frame.empty:
         ensure_database(db_path)
         return 0
@@ -1001,7 +1001,7 @@ def load_fina_indicator_history(
     as_of: str,
     symbols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Load point-in-time available financial-indicator history for Stage-L coverage checks."""
+    """Load point-in-time available secondary financial-indicator history."""
     db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(f"Market data database not found: {db_path}")

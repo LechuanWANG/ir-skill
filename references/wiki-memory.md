@@ -1,99 +1,82 @@
-# Investment LLM Wiki 记忆
+# LLM Wiki：可选的投研记忆
 
-使用 `docs/investment-llm-wiki/` 中的本地 Investment LLM Wiki 作为持久投资记忆。Wiki 保存当时的事实、假设和决策快照，不把后见信息覆盖进旧记录。
+LLM Wiki 用于用户希望跨轮复用研究、跟踪假设、沉淀资料或更新历史结论的场景。它不是每次投研的默认入口，也不是当前事实的权威来源：未明确启用时，不读取 `schema.md`、`index.md`、`log.md` 或任何 Wiki 页面；启用后也只读取与当前主题和 `as_of` 直接相关的内容。
 
-## 分析前召回
+原始资料归档与 LLM 综合层相互独立。用户要求下载、保存或归档资料时，可以直接写入 `raw/`；这不要求创建、读取或更新 `wiki/`、`index.md` 和 `log.md`。
 
-先读 `docs/investment-llm-wiki/index.md`，再读相关页面：
+## 何时启用
 
-- `profile.md`：偏好、风险承受能力、约束和深度模式阈值
-- `portfolio.md`：当前持仓
-- 公司/行业/entity 页面
-- analysis/thesis 页面
-- decision 页面
-- evaluation 页面或 decision 页中的 20/60/120 日评估记录
+在以下任一情况启用：
 
-## 分析后更新
+- 用户明确要求读取、复用、更新或维护 LLM Wiki。
+- 用户要求沉淀本轮结论、持续跟踪公司/行业/主题，或复盘历史假设。
+- 用户明确要求把原始资料整合为可跨轮复用的研究页面。
 
-分析后，只更新有用且可持久化的知识：
+普通单次研究、新闻/价格归因、技术面筛选、短线执行观察和仅下载来源时，不自动启用。若历史页面可能过时，先以本轮可得的原始来源和市场数据为准，并将 Wiki 内容明确标为历史背景、核验线索或待更新观点。
 
-- 追加 `log.md`
-- 用持久事实更新 entity 页面
-- 用长期投资假设账本更新 analysis/thesis 页面
-- 为 `research_status`、`long_term_status`、`entry_action` 和 `portfolio_action` 创建或更新 decision 页面
-- 写入 `previous_decision_id`、`decision_change`、`change_reasons` 和 `methodology_change`，确保 refresh 能区分新事实与框架重置
-- `queued / in_progress / stale` 写入 watchlist 或研究队列，不创建伪 `wait_evidence` 决策
-- 按 `research-evaluation.md` 追加 20/60/120 日评估，不覆盖决策快照
-- 当新证据与旧说法冲突时，使用 `contradiction` 块
-
-写入敏感持仓、资金或偏好细节前必须询问，除非用户明确要求更新 Wiki。
-
-## 页面最小字段
-
-### Thesis / analysis
+## 规范目录
 
 ```text
-thesis_id
-symbol
-as_of
-holding_horizon
-long_term_thesis
-return_sources_3_5y
-core_assumptions[]
-validation_metrics[]
-supporting_evidence[]
-contrary_evidence[]
-falsification_conditions[]
-long_term_status
-next_validation_date
+docs/investment-llm-wiki/
+├── schema.md                    # 可选 Wiki 的工作规则
+├── index.md                     # 启用 Wiki 时的内容入口
+├── log.md                       # 启用 Wiki 时的追加式时间线
+├── raw/                         # 可独立使用的不可变原始资料
+│   ├── company/<公司名>/<YYYY-MM-DD>/<内容明确的文件名>
+│   ├── industry/<行业名>/<YYYY-MM-DD>/<内容明确的文件名>
+│   ├── market/<市场或指数名>/<YYYY-MM-DD>/<内容明确的文件名>
+│   └── macro/<主题名>/<YYYY-MM-DD>/<内容明确的文件名>
+└── wiki/                        # 仅在启用后由 LLM 综合维护
+    ├── company/<公司名>/<内容页面>.md
+    ├── industry/<行业名>/<内容页面>.md
+    ├── market/<市场或指数名>/<内容页面>.md
+    └── macro/<主题名>/<内容页面>.md
 ```
 
-### Decision
+使用稳定、可读的主题名：公司目录只使用公司名，例如 `顺丰控股`；行业目录只使用行业名，例如 `半导体`；市场目录使用稳定市场或指数名，例如 `沪深A股`。不要用本轮任务、筛选条件、用户问题或临时 slug 命名目录。
 
-```text
-decision_id
-previous_decision_id
-decision_as_of
-reference_price
-research_status
-long_term_status
-entry_action
-portfolio_action
-decision_change
-change_reasons[]
-methodology_change
-acceptable_price_range
-overheat_flags[]
-waiting_conditions[]
-missing_evidence[]
-falsification_conditions[]
-next_validation_date
-source_snapshot[]
+## 原始资料：`raw/`
+
+- 资料归档路径固定为 `raw/<domain>/<subject>/<YYYY-MM-DD>/<内容明确的文件名>`。日期使用来源发布日期；未知时使用获取日期，并在文件名或相关页面保留报告期和 `as_of`。
+- 文件名描述资料内容，不使用接口缩写、网页 URL 片段、无语义编号或乱码。例如：`2026年第一季度报告.pdf`、`日线行情（2026-06-09至2026-07-13）.json`、`巨潮公告查询-半年报业绩预告.json`。
+- `raw/` 只存原始文件或忠实归档副本。归档后不改写内容；更正或补充时归档新文件，而不是覆盖旧文件。
+- 大型或多工作表 Excel、全量数据库导出保留在用户指定位置或 `data/`，不复制到 `raw/`。必要时在启用的 Wiki 页面或用户指定记录中保留路径、工作表、范围、来源和时点。
+- 一个来源只归入一个主要领域。跨领域解释由 Wiki 链接或当前回答表达，不复制同一文件。
+
+## Wiki 页面：`wiki/`
+
+启用 Wiki 后，使用 `wiki/<domain>/<subject>/<内容页面>.md` 写入综合知识。Wiki 目录没有日期文件夹；同一内容角色持续更新同一页面，使用 frontmatter 的 `as_of` 与 `updated` 记录时间边界。页面名必须描述内容，例如 `投资逻辑.md`、`短线候选筛选.md`、`行业图谱.md`，而不是任务 ID 或日期版副本。
+
+每个页面包含可读的 frontmatter：
+
+```yaml
+---
+type: research
+domain: company
+subject: 顺丰控股（002352.SZ）
+as_of: 2026-07-10
+updated: 2026-07-14
+sources:
+  - ../../../raw/company/顺丰控股/2026-07-13/2025年年度报告.pdf
+related_domains:
+  - industry
+---
 ```
 
-### Evaluation
+- `domain` 必须与页面所在目录一致：`company`、`industry`、`market` 或 `macro`。
+- 记录事实、推断、假设、反方证据、矛盾、未知项和时间边界。不要将历史判断改写成“当时已知”。
+- 通过相对 Markdown 链接或完整的 `[[wiki/<domain>/<subject>/<内容页面>]]` 表达关联。主题名在不同领域重复时，必须带上领域路径。
 
-```text
-decision_id
-evaluation_window = 20d / 60d / 120d
-evaluation_date
-absolute_return
-market_relative_return
-industry_relative_return
-max_adverse_excursion
-earnings_estimate_revision
-catalyst_status
-falsification_status
-thesis_status
-process_adherence
-```
+## 启用后的最小流程
 
-保留所有四类 `entry_action` 的记录，不只写入最终买入对象。
+1. 确认用户希望使用持久记忆，并确认本轮主题、`as_of` 和写入范围。
+2. 先读取 `schema.md`、`index.md`、与主题直接相关的近期页面和日志；不扫描全部 Wiki，也不以旧页面替代新来源。
+3. 需要保存的新来源直接归档到 canonical `raw/` 路径。只有需要综合时才阅读资料并更新页面。
+4. 更新受影响的页面、`index.md` 和 `log.md`，保留矛盾、来源、时间边界和未解问题。
+5. 需要时运行 `python3 scripts/wiki_index.py --wiki-dir docs/investment-llm-wiki`，再说明整合完成。
 
-## 链接纪律
+## 授权与迁移
 
-使用 `[[portfolio]]`、`[[0700.HK]]`、`[[thesis-0700-long-term]]`、`[[2026-07-01-0700-wait-price]]` 这样的 Wiki 链接。decision 链接到 thesis 和后续 evaluation；原始来源文件与原决策快照保持不可变。
-
-生成 refresh 或新的 decision 报告前，必须先查询上一条同标的 decision。若没有新财报、重大事件、复核到期或显著价格/估值变化，则只写“沿用上次结论”，不重复生成完整深研。
-
-既有报告若包含 `decision_snapshot.json`，先运行 `scripts/research_workflow.py snapshot-import --input <path>` 将历史结论写入同一 SQLite。导入按 `decision_id` 幂等去重，使下一次候选发现立即应用重复冷却、refresh 分流和结论差异比较。
+- 只在用户明确提供或授权时维护 `profile.md`、`portfolio.md`，不得将密钥、Cookie、代理凭据或账户资料写入任何 Wiki 文件。
+- 不覆盖用户手写页面。无法确认归属时保留原文件并记录待确认事项。
+- 迁移旧资料时，将任务名目录拆分到稳定的公司、行业、市场或宏观主题目录；原始资料增加日期层，Wiki 页面去除日期层级和任务名。同步修复链接与 frontmatter。

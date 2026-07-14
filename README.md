@@ -1,240 +1,174 @@
-# Local Investment Research Skill
+# IR Skill
 
-本仓库是一个面向股票研究、A 股筛选、组合复盘和本地投资知识库维护的 Codex skill。它把 AI 拉回到可验证、可复现、可沉淀的投研工作流：先判断公司未来 3–5 年是否值得持有，再用近期事件、宏观、行业、估值、技术面和组合约束判断现在能不能买，最后给出条件化行动和下一验证日期。
+> 面向 A 股与中国市场研究的 Codex skill：先厘清问题、持有期和证据边界，再给出可追溯、可证伪、带条件的研究判断。
 
-> 本 skill 只用于投资研究辅助，不构成金融建议，也不是自动交易指令。
+<p align="center">
+  <img src="assets/ir-skill-logo.svg" width="180" alt="IR Skill：带电路节点和上行信号线的极客风 Logo">
+</p>
 
-## 它解决什么问题
+多数“AI 投研”工具的问题，不是不会算指标，而是把不同的问题塞进同一套筛选器、评分表或报告模板：短线交易被迫做完整基本面，长期研究又被新闻热度带偏；二级数据和抓取内容被误当成财务事实；历史笔记要么完全丢失，要么不加甄别地污染当下判断。
 
-很多 AI 投资分析容易出现几个实际问题：
+IR Skill 的目标是让 Codex 成为**研究伙伴**，而不是自动荐股器、固定状态机或黑箱打分器。它帮助用户用有限但可靠的证据形成暂时的、可复核的判断，并明确下一步该验证什么。
 
-1. **长期价值和当前买点混在一起**
-   “好公司”不等于“现在可以买”。本 skill 分别输出长期准入、当前买点和已有持仓动作，不用一个综合分或单一操作掩盖差异。
+> 本项目仅用于研究辅助，不构成投资建议、收益承诺或自动交易指令。
 
-2. **取数路径僵化**
-   每次默认跑同一套技术或因子脚本，无法根据长期质量、盈利拐点、事件驱动、行业信号和风险审查选择不同证据。
+## 它解决什么痛点
 
-3. **容易追高**  
-   纯动量和热门事件会天然偏向近期涨幅最大的标的。本 skill 分别检查估值追高、价格追高和叙事追高，用相对分位、ATR/趋势偏离、拥挤与事件验证避免把“涨得多”误当成“值得买”。
+| 常见痛点 | 造成的问题 | IR Skill 的处理方式 |
+| --- | --- | --- |
+| 一套固定流程处理所有问题 | “为什么涨了”“短线怎么观察”“值不值得长期跟踪”被强行输出成同一份报告 | 先按意图路由：归因、研究队列、候选比较、持仓复盘、长/中/短期研究各走最小必要路径 |
+| AI 把二级数据、网页抓取和推断混在一起 | 看似完整，实则无法判断哪些事实可靠、哪些已过期 | 强制区分事实、推断、假设与未知；关键数字携带来源、报告期、发布时间、获取时间、单位与币种 |
+| 长期质量与短期入场混为一个“总分” | 好公司不等于当下适合买入，短线强势也不等于长期值得持有 | 将长期逻辑、当前赔率、技术/交易约束和组合适配分开思考；按持有期使用不同的数据包与研究深度 |
+| 自动筛选、因子排名被误当成结论 | 机械分数掩盖数据缺口、估值前提和反方证据 | 脚本只做下载、存储、查询与计算；Agent 负责选择证据、解释传导、比较替代项和形成条件化立场 |
+| 历史研究无法复用，或旧观点变成“记忆污染” | 每次从零开始，或把过时结论误当最新事实 | LLM Wiki 完全按需启用；原始资料与综合记忆分层保存，读取时受主题和 `as_of` 约束 |
+| 用户的持仓、资料和凭据容易混入公开项目 | 隐私、复现和版本管理都失控 | 研究数据库、原始资料、生成报告、Obsidian 配置和 `.env` 默认本地忽略，不随 skill 代码发布 |
 
-4. **数据口径混乱**  
-   市值、PE、PB、EPS、股本单位、币种和公告期经常混在一起。本 skill 要求关键数据标明来源、时间、单位、币种，并用脚本做机械复算。
+## 与同类工具不同的地方
 
-5. **深度研究缺少准入门和对抗视角**
-   单一视角容易只证明自己想证明的东西。深度模式先由研究委员会裁定长期准入，再加载近期证据，并经过两轮点名质询后由 PM 独立裁决。
+### 1. 问题驱动，而不是模板驱动
 
-6. **研究结果无法长期复用**  
-   很多结论停留在一次对话里。本 skill 设计了 Investment LLM Wiki 记忆协议，把持久事实、投资假设、决策记录、矛盾证据沉淀到本地知识库。
+IR Skill 不默认启动全市场筛选、深度报告或长期记忆。它先判断用户是在解释异动、建立候选池、比较标的、评估持仓，还是寻求某个持有期内的行动判断；然后只读取少量直接相关的研究模块。
 
-## 核心亮点
+这意味着：
 
-- **长期优先双阶段状态机**：`research-screening.md` 统一定义阶段 L/N、决策矩阵和不可绕过校验。
-- **四个状态字段**：分别输出 `research_status`、`long_term_status`、`entry_action` 和 `portfolio_action`，不混合研究完成度、公司质量、当前价格与已有持仓动作。
-- **四类当前行动**：明确 `staged_buy / wait_price / wait_evidence / avoid`，允许长期看好但选择等待。
-- **决策备忘录优先**：默认输出一屏内的结论、长期准入、当前行动、价格/等待条件、最大风险、时间戳和下一验证日期。
-- **路由式参考资料加载**：根据用户意图只读取必要 reference，例如单股研究、A 股筛选、组合复盘、价格异动归因、Wiki 导入和深度研究各有不同路径。
-- **本地 SQLite 数据底座**：使用 `data/investment_research.sqlite` 存储可复用市场数据，避免每次运行产生临时 CSV 缓存。
-- **Point-in-time 修订记录**：TuShare 异构观察保留 `business_key`、版本、首次/最后可见时间；历史研究只读取当时已知的最新版本，避免后续修订倒灌。
-- **TuShare 研究计划器**：先取 `long-term-quality + risk-review` 长期证据，再按需追加事件、行业、宏观与最后的 `timing-liquidity`。
-- **能力感知与降级**：先用 `doctor` 记录当前 token 可用接口，再用 `staged-plan` 强制生成长期优先的最小数据包；缺权限时明确替代来源。
-- **默认长期基本面研究池**：`scripts/fundamental_pool.py` 先用估值、财务质量、增长和资产负债表生成待研究对象；历史覆盖只决定数据准备度，多年经营稳定性才进入耐久分，并按新发现、核心更新和 challenger 分配名额。
-- **三种运行模式**：`discovery` 建研究队列，`refresh` 只写增量变化，`decision` 对少量对象完成双阶段裁定并给现金比较与最接近买入对象。
-- **缺口物质性分层**：流程缺口保持研究未完成；只有可能改变长期状态、回报门槛或下行情景的 `blocking_evidence` 才生成 `wait_evidence`。
-- **显式量化基线**：`scripts/factor_screen.py` 只在明确要求多因子/技术量化时运行，通过硬门槛、趋势、价值、质量、成长、风险惩罚和行业集中度控制生成研究池。
-- **事件信号而非新闻选股**：`news_intake` 按需生成去重、核实、假设映射的信号卡，新闻热度不能提高长期评价。
-- **显式抗追高机制**：分别检查估值、价格和叙事追高；相对分位与波动率调整优先，不允许纯动量排序直接变成候选结论。
-- **财务数字机械复核**：`scripts/financial_check.py` 用于复算市值、PE、PB、股息率等，降低单位、币种和股本口径错误。
-- **两阶段研究委员会**：先裁定长期准入，再评估当前买点；Round 1 点名最薄弱主张，Round 2 补证据、收窄或下调置信度。
-- **20/60/120 日闭环**：同时评估买入、等价格、等证据和回避，分开衡量长期研究、买点与风险控制质量。
-- **本地投资记忆**：通过 `references/wiki-memory.md` 约定分析前召回、分析后写回、Wiki 链接和矛盾记录。
-- **输出模板完整**：内置长期账本、买入条件卡、快速备忘录、深度报告、四桶名单和 LaTeX/PDF QA 要求。
+- 短线技术面问题优先关注价格、成交、流动性、波动、相对强弱、资金与事件风险，不会默认展开长篇基本面研究。
+- 长期研究则回到商业质量、竞争、资本配置、治理、估值隐含预期和反方证据，不被短期热度替代。
+- 资料不足时可以明确“暂不判断”，而不是为了完整模板而编造结论。
 
-## 适合的场景
+### 2. 为“证据边界”设计，而不是只为“数据更多”设计
 
-- 分析一只股票是否值得买入、加仓、减仓或继续等待。
-- 对 A 股市场建立长期基本面研究池，或在明确要求时做可复现的多因子初筛。
-- 把筛选短名单进一步升级为一流公司深度研究。
-- 解释某只股票、行业或组合近期价格异动。
-- 复盘当前持仓、仓位集中度、机会成本和风险暴露。
-- 把报告、笔记、投资假设和历史决策写入本地 Investment LLM Wiki。
+公司、交易所和巨潮资讯的定期报告、公告及原始披露是收入、利润、现金流、资产负债表等财务事实的最终依据。TuShare、网页抓取和本地脚本只提供结构化市场数据、披露线索或待核验材料，不能改写原始事实。
+
+输出要求保留：
+
+- 事实与推断的边界；
+- 时间边界和 `as_of`；
+- 关键反方证据、来源冲突和数据缺口；
+- 会改变判断的价格条件、证伪条件与下一验证日期。
+
+### 3. 按投资模式切换信息密度
+
+“长期、中期、短期”不只是报告标题，而是不同的问题集合。Skill 会把持有期与数据需求对齐：长期侧重商业与估值前提，中期增加催化、预期差和行业验证，短期聚焦可交易性、节奏、事件窗口和风险约束。
+
+这避免了两种常见误用：用短期图形替代长期研究，或用冗长的长期分析掩盖一个本质上需要交易约束的问题。
+
+### 4. 把确定性工具和判断权分开
+
+Python 工具负责可重复的机械工作：同步市场数据、调用显式 TuShare endpoint、缓存原始响应、导出数据包、检查 Wiki 链接与结构。它们**不**生成候选排名、长期评级、买卖信号或自动报告。
+
+研究路径、可比对象、证据权重、情景推演和最终表述仍由 Agent 结合上下文完成。这让工作流既可复现，也不会把研究方法锁死在一套难以迭代的状态机中。
+
+### 5. 记忆是可选能力，不是隐性副作用
+
+本项目把持久化分为两层：
+
+- `raw/`：可选的原始资料归档，按主题和日期保存，不可变。
+- `wiki/`：可选的 LLM 综合记忆，用于跨轮跟踪假设、结论和待验证事项。
+
+普通研究、技术筛选、短线判断和单次资料下载不会自动读取或写入 Wiki。只有用户明确要求复用、建立、更新、沉淀或复盘研究时，Skill 才启用它。
+
+## 工作流一览
+
+```text
+用户问题 + 持有期 + 约束
+            │
+            ▼
+      意图路由与最小研究路径
+            │
+            ├── 原始披露、公告、官方来源
+            ├── 按需的市场/估值/流动性/事件数据
+            └── 相关 reference 与模板
+            │
+            ▼
+事实 / 推断 / 假设 / 未知项分层
+            │
+            ▼
+条件化研究立场、反方证据与下一验证动作
+            │
+            └── 仅在用户要求时写入本地 LLM Wiki
+```
+
+## 适合的任务
+
+- 研究一只股票的长期逻辑、当前价格和最重要的反方证据。
+- 从特定行业、主题、约束或已有候选中建立研究队列。
+- 分析价格异动、业绩变化、政策、行业事件及其可能传导。
+- 对候选做比较，对已有持仓做复盘，或制定下一步研究计划。
+- 按明确的长、中、短期持有期准备相应的市场、估值、流动性与事件数据。
+- 在用户授权下维护本地的研究假设、原始资料和决策复盘。
+
+## 不做什么
+
+- 不自动下单，不输出伪装成确定结论的“强烈买入/卖出信号”。
+- 不把因子、技术指标、新闻热度或单一数据源直接转换成长期评级。
+- 不用 TuShare 字段、网页抓取或脚本复算替代公司和交易所的财务原始披露。
+- 不默认下载全市场、不默认运行筛选，也不默认读取或写入用户的研究记忆。
+- 未获得用户明确授权和必要约束时，不将证券层面的研究观点升级为个性化仓位建议。
+
+## 快速开始
+
+### 1. 安装为 Codex skill
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+git clone https://github.com/LechuanWANG/ir-skill.git \
+  "${CODEX_HOME:-$HOME/.codex}/skills/ir-skill"
+```
+
+重新启动 Codex 后即可使用 `$ir-skill`。如果已经克隆本仓库，也可以将该目录软链接到 `${CODEX_HOME:-$HOME/.codex}/skills/ir-skill`。
+
+### 2. 用自然语言提出研究问题
+
+```text
+Use $ir-skill to compare these three A-share candidates for a 3–5 year research queue.
+
+Use $ir-skill to explain this stock’s price move. Separate confirmed facts,
+plausible transmission paths, and what still needs verification.
+
+Use $ir-skill to run a short-term technical screen. Focus on price, liquidity,
+momentum, and event risk rather than deep fundamentals.
+
+Use $ir-skill to reassess my holding, archive the new filing, and update only
+the relevant pages in my LLM Wiki.
+```
+
+### 3. 按需启用数据工具
+
+仅当研究确实需要结构化市场数据时，再安装 Python 依赖、配置 `TUSHARE_TOKEN` 并运行脚本：
+
+```bash
+python3 -m pip install pandas tushare
+export TUSHARE_TOKEN="your-token"
+
+python3 scripts/tushare_mode_data.py plan medium \
+  --symbol 000001.SZ --end-date 20260714
+
+python3 scripts/tushare_mode_data.py fetch short \
+  --symbol 000001.SZ --start-date 20260601 --end-date 20260714 --dry-run
+```
+
+更一般的 TuShare 请求使用 `scripts/tushare_gateway.py` 显式传入 endpoint 与 JSON 参数。具体的数据选择、权限探测、缓存策略和来源边界见 [`references/tushare-research.md`](references/tushare-research.md) 与 [`references/data-sources.md`](references/data-sources.md)。
 
 ## 仓库结构
 
 ```text
 .
-├── SKILL.md                         # skill 入口、路由规则和运行原则
-├── agents/openai.yaml               # Codex skill 展示与默认提示
-├── assets/                          # 快速备忘录、深度报告、决策记录模板
-├── references/                      # 双阶段状态机、证据模块、输出契约、评估和 Wiki 说明
-└── scripts/                         # 可复现数据、筛选、校验和 Wiki lint 脚本
+├── SKILL.md                   # Skill 入口、路由与安全边界
+├── references/                # 按需读取的研究模块与数据来源规范
+├── assets/                    # 可裁剪的备忘录、深度报告和决策记录模板
+├── scripts/                   # 仅承担确定性数据与 Wiki 结构工作
+└── agents/openai.yaml         # Codex UI 元数据
 ```
 
-主要脚本：
-
-| 脚本 | 用途 |
-|---|---|
-| `scripts/market_data_store.py` | 创建和读写本地 SQLite 市场数据表 |
-| `scripts/tushare_sync.py` | 从 TuShare 同步 A 股价格、复权、估值、财务指标和股票基础信息 |
-| `scripts/tushare_research.py` | 探测权限，使用 `staged-plan` 规划长期优先数据包，按 profile 采集证据并查询缓存 |
-| `scripts/research_workflow.py` | 执行长期优先研究状态机、证据/假设记录、阶段裁定、四桶报告和结果评估 |
-| `scripts/research_store.py` | 迁移研究数据库并查询 assessment、claim 和 outcome 审计记录 |
-| `scripts/news_intake.py` | 按需抓取/导入、去重和查询事件信号，并映射到版本化投资假设 |
-| `scripts/fundamental_pool.py` | 默认建立长期基本面研究池，并标记阶段 L 所需证据 |
-| `scripts/technical_screen.py` | 对阶段 L 候选计算反追高、三年价格状态、股东总回报、估值变化和机会成本 |
-| `scripts/factor_screen.py` | 仅在明确要求时生成技术/多因子量化研究池 |
-| `scripts/financial_check.py` | 复算市值和估值指标 |
-| `scripts/wiki_index.py` | 检查 Investment LLM Wiki 坏链、frontmatter 和来源字段 |
-
-## 快速开始
-
-把本仓库作为 Codex skill 安装或放入你的 skills 目录后，可以直接这样调用：
-
-```text
-Use $local-investment-research to analyze 300308.SZ.
-Use $local-investment-research to screen A-shares for long-term research candidates.
-Use $local-investment-research to run an explicit balanced multi-factor A-share baseline.
-Use $local-investment-research to review my current portfolio and update the local wiki.
-```
-
-如果需要同步 TuShare 数据，把 token 放在项目根目录 `.env` 的 `TUSHARE_TOKEN`；环境变量中的同名值优先。脚本会自动加载，不需要把 token 写进命令或文档。
-
-```bash
-python3 scripts/tushare_sync.py 20260101 20260131 --db-path data/investment_research.sqlite --daily-basic --fina-indicator --stock-basic
-
-python3 scripts/fundamental_pool.py \
-  --db-path data/investment_research.sqlite \
-  --as-of 20260131 \
-  --top 30 \
-  --output outputs/screens/fundamental_pool_20260131.csv
-```
-
-先检查当前接口能力，再生成阶段 L 的长期数据计划：
-
-```bash
-python3 scripts/tushare_research.py doctor \
-  --as-of 20260710 \
-  --endpoints daily_basic income balancesheet cashflow report_rc stk_surv pledge_stat moneyflow
-
-python3 scripts/research_workflow.py staged-plan \
-  --symbols 000001.SZ \
-  --as-of 20260710 \
-  --current-profile market-context timing-liquidity
-```
-
-`scripts/tushare_research.py staged-plan` 提供等价的数据规划入口。裸 `plan` 只用于明确的单一 profile 诊断，不作为默认研究入口。确认计划后，对候选股定向采集长期证据：
-
-```bash
-python3 scripts/tushare_research.py collect \
-  --profile long-term-quality risk-review \
-  --symbols 000001.SZ \
-  --as-of 20260710
-```
-
-裁定 `long_term_status` 后，再按问题追加 `event-driven / industry-signal / market-context`，最后使用 `timing-liquidity`。事件线索先通过 `scripts/news_intake.py` 核实，不能直接进入买入结论。
-
-初始化并检查可审计研究存储：
-
-```bash
-python3 scripts/research_store.py migrate
-python3 scripts/research_store.py stats
-```
-
-按需抓取结构化事件信号；`fetch` 需要本机可用的 Webclaw，离线输入先 `parse` 再 `ingest`：
-
-```bash
-python3 scripts/news_intake.py fetch --since-hours 72
-python3 scripts/news_intake.py parse --input authorized_webclaw.json --since-hours 72
-python3 scripts/news_intake.py ingest --input authorized_webclaw.json --since-hours 72
-python3 scripts/news_intake.py query --important-only
-```
-
-研究运行、长期/当前裁定、四桶输出和 20/60/120 日评估统一从 `scripts/research_workflow.py` 进入；用 `--help` 查看各子命令必需字段：
-
-```bash
-python3 scripts/research_workflow.py --help
-python3 scripts/research_workflow.py snapshot-import \
-  --db-path data/investment_research.sqlite \
-  --input outputs/reports/example/data/decision_snapshot.json
-python3 scripts/research_workflow.py report \
-  --format md \
-  --output outputs/reports/decision_buckets.md
-python3 scripts/research_workflow.py outcomes-summary
-```
-
-生成多因子短名单：
-
-```bash
-python3 scripts/factor_screen.py \
-  --db-path data/investment_research.sqlite \
-  --as-of 20260630 \
-  --preset balanced \
-  --top 50 \
-  --output outputs/screens/a_share_factor_screen_20260630.csv
-```
-
-复算市值：
-
-```bash
-python3 scripts/financial_check.py verify-market-cap \
-  --price 10 \
-  --shares 100000000 \
-  --reported 1000000000 \
-  --currency CNY
-```
-
-检查本地 Wiki：
-
-```bash
-python3 scripts/wiki_index.py --wiki-dir docs/investment-llm-wiki
-```
-
-## 输出风格
-
-快速研究默认输出：
-
-```text
-【运行模式】discovery / refresh / decision
-【结论】今天最优行动、现金比较、最接近买入对象
-【研究状态】queued / in_progress / decision_ready / stale
-【长期准入】passed / needs_evidence / rejected
-【当前行动】staged_buy / wait_price / wait_evidence / avoid
-【持仓行动】not_applicable / add / hold / reduce / exit
-【防追高】估值 / 价格 / 叙事
-【价格或等待条件】区间 + 重新评估触发器
-【最大风险 / 证伪】什么情况说明判断错了
-【缺口分层】阻断项 / 置信度限制项 / 持续监测项 / 流程缺口
-【长期价格状态】三年股东总回报、估值变化与机会成本
-【相对上次】结论差异、新事实或方法重置
-【下一步】验证日期、深研、Wiki 与 evaluation
-```
-
-深度研究会进一步包含：
-
-- 长期投资假设账本和 3–5 年收益来源。
-- 当前事件、宏观、行业、三情景、技术与组合约束。
-- 估值、价格和叙事三类追高检查。
-- 至少 500 个前复权交易日支持的长期价格状态、股东总回报和机会成本。
-- 两轮质询、置信度变化和保留分歧。
-- 投资与买入条件卡、数据附录和 20/60/120 日写回计划。
-
-## 设计原则
-
-1. **先长期准入，后当前买点**：长期不通过时，不因催化或技术突破破例。
-2. **先假设，后取数**：先明确研究问题，再由脚本生成最小充分数据包。
-3. **先核实事件，后讨论影响**：新闻只发现线索，原始来源和量级决定是否进入结论。
-4. **先核对，后确信**：关键财务数字不能只依赖单一标准化数据源。
-5. **先意图路由，后短名单**：因子模型只在需要全市场降维时使用，不直接给买卖结论。
-6. **先检查追高，后决定节奏**：长期看好也可以明确 `wait_price`。
-7. **先保存快照，后复盘结果**：保留所有四类行动，区分过程质量和结果运气。
-8. **先记录矛盾，后更新结论**：新证据和旧结论冲突时，保留矛盾而不是覆盖历史。
+建议从 [`SKILL.md`](SKILL.md) 了解完整路由规则；研究框架与数据边界分别在 [`references/research-screening.md`](references/research-screening.md)、[`references/investment-modes.md`](references/investment-modes.md) 和 [`references/data-sources.md`](references/data-sources.md) 中展开。
 
 ## 数据与隐私
 
-- 默认数据文件为 `data/investment_research.sqlite`，用于本地复用市场数据。
-- `TUSHARE_TOKEN` 保存在环境变量或已被 `.gitignore` 忽略的项目 `.env`，不要写进代码、文档、日志或 Wiki。
-- 持仓、资金、偏好等敏感信息默认保存在本地 Wiki；写入前应获得用户确认。
-- 原始数据和报告产物建议保留在本地工作区，按需导出最终 CSV/XLSX/PDF。
+- 不要将 `TUSHARE_TOKEN`、`WEBCLAW_API_KEY`、Cookie、代理凭据或其他秘密写入代码、文档、日志或 Wiki。
+- `.env`、`data/`、`docs/investment-llm-wiki/`、`output/`、`reports/`、`tmp/` 与 `.obsidian/` 均为本地工作区内容，默认不提交。
+- 原始资料归档与 LLM Wiki 都由用户决定是否启用；涉及持仓、资金、偏好或个人风险约束时，写入前需要明确授权。
+- 对任何可能影响结论的数据，保留来源、时间点、冲突与不确定性，而不是制造虚假的精确感。
 
 ## 免责声明
 
-本项目只提供研究流程、数据处理和决策辅助框架。任何输出都不应被理解为投资建议、收益承诺、交易指令或风险豁免。使用者需要自行核验数据、判断适当性，并承担最终投资决策责任。
+IR Skill 提供研究方法、证据组织与数据工具，不提供持牌投资顾问服务。市场有风险，使用者应独立判断并自行承担决策责任。

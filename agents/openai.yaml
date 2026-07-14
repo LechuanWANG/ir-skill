@@ -1,4 +1,5 @@
 interface:
-  display_name: "Local Investment Research"
-  short_description: "Long-term A-share discovery, refresh, and decisions"
-  default_prompt: "Use $local-investment-research to identify whether I need discovery, refresh, or a decision, then give a long-term-first conclusion with evidence, price regime, opportunity cost, and changes from the prior view."
+  display_name: "IR Skill"
+  short_description: "Evidence-led stock and market research"
+  icon_large: "./assets/ir-skill-logo.svg"
+  default_prompt: "Use $ir-skill to analyze this investment question; use my LLM Wiki only when I ask to reuse or update it."
