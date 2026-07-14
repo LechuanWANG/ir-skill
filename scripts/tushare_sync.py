@@ -223,7 +223,7 @@ def fetch_fina_indicator(
     batch_size: int = DEFAULT_BATCH_SIZE,
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
 ) -> pd.DataFrame:
-    """Fetch announced financial indicators by symbol."""
+    """Fetch supplementary TuShare financial-indicator time series by symbol."""
     frames: list[pd.DataFrame] = []
     for batch in chunk_symbols(symbols, batch_size):
         for symbol in batch:
@@ -302,7 +302,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--days-per-chunk", type=int, default=DEFAULT_DAYS_PER_CHUNK)
     parser.add_argument("--sleep-seconds", type=float, default=DEFAULT_SLEEP_SECONDS)
     parser.add_argument("--daily-basic", action="store_true", help="Sync TuShare daily_basic valuation/liquidity data.")
-    parser.add_argument("--fina-indicator", action="store_true", help="Sync TuShare fina_indicator financial data.")
+    parser.add_argument(
+        "--fina-indicator",
+        action="store_true",
+        help="Sync supplementary financial-indicator trends; never use them as final financial-statement facts.",
+    )
     parser.add_argument("--stock-basic", action="store_true", help="Sync TuShare stock_basic industry/name metadata.")
     return parser
 

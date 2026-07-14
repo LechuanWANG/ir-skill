@@ -1,156 +1,93 @@
-# TuShare 研究数据计划
+# TuShare 研究数据：按投资模式选取
 
-把 TuShare 当作标准化研究数据底座，不要把它缩减成技术筛选器，也不要把 40 多个接口一次性全部拉取。
+TuShare 是结构化数据来源和本地缓存工具，不是研究流程控制器。先写出待验证的假设和所需字段，再选择接口。公司和交易所发布的 PDF 定期报告、公告与原始披露是最终财务事实来源；TuShare 的财务相关字段只用于发现披露、建立时间线和提出待阅读问题。
 
-## 默认流程
+## 常见数据需求
 
-```text
-识别用户意图、持有周期和 as_of
--> 写出初始可证伪假设
--> 阶段 L：long-term-quality + risk-review
--> 检查接口能力、缓存和数据新鲜度
--> 定向采集并与官方披露交叉核对
--> 裁定 long_term_status
--> 阶段 N：按需 event-driven / industry-signal / market-context
--> 最后 timing-liquidity
--> 形成投资与买入条件卡
-```
+| 研究问题    | 可能需要的数据                   | 先问的问题                   |
+| ------- | ------------------------- | ----------------------- |
+| 估值与市场背景 | 日线、复权、`daily_basic`、股本、指数 | 用哪个交易日、复权口径和基准？         |
+| 经营与财务质量 | 公司/交易所 PDF 三张表、附注与公告；TuShare 字段仅作披露线索 | 用报告期还是披露可得日？如何处理季节性和修订？ |
+| 公司风险与治理 | 股东、质押、回购、公告、审计意见等         | 哪些风险会改变核心假设，而非只是背景？     |
+| 行业与事件   | 指数、行业指标、公告、宏观数据           | 该指标如何传导至公司收入、成本或估值？     |
+| 市场范围比较  | 股票基础信息、行业分类、历史价格和财务数据     | 选择范围是否会系统性遗漏或偏向某类公司？    |
 
-用户只说“筛选股票”而尚无候选池时，先使用 `fundamental_pool.py` 的长期基本面研究池；只有用户明确要求全市场量化初筛、动量或技术面筛选时，才运行全市场同步与 `factor_screen.py --explicit-quantitative-baseline`。两类研究池都不能直接生成推荐。
+接口权限、覆盖时间和返回口径可能不同。开始前确认 token 权限与数据可得性；无法获取时，改用原始披露或明确降低结论的置信度。
 
-## 研究 Profiles
+## 本地同步
 
-| Profile | 阶段 | 解决的问题 | 核心数据 |
-|---|---|---|---|
-| `long-term-quality` | L | 是否是可长期持有的好生意 | 三张表、财务指标、业务分部、分红、股东变化 |
-| `risk-review` | L | 哪些风险可能让长期假设失效 | 资产负债表、现金流、质押、股东、解禁和融资风险 |
-| `earnings-inflection` | L/N | 盈利预期变化是否可持续 | 业绩预告/快报、卖方预测、机构调研、财报和披露窗口 |
-| `valuation-repair` | L/N | 是长期误价还是价值陷阱 | 历史估值、三张表、现金流、分红、质押和卖方预期 |
-| `event-driven` | N | 已核实催化如何更新长期假设 | 回购、解禁、增减持、机构调研、资金、龙虎榜和停复牌 |
-| `industry-signal` | L/N | 行业结构或景气如何传导到公司 | 行业映射、业务分部、卖方预测、指数和宏观数据 |
-| `market-context` | N | 当前宏观和市场状态是什么 | 指数、Shibor、CPI、PPI、PMI、货币供应和行业分类 |
-| `timing-liquidity` | N 最后 | 长期通过后何时介入 | 行情、复权、估值、资金流、筹码、拥挤和流动性 |
-
-可以组合多个 profile，但单股买入或推荐问题必须先使用 `long-term-quality + risk-review`。事件和行业信号可以先生成候选，不能先生成买入；候选回到阶段 L 后再决定是否追加阶段 N。数据不足时增量采集，不预拉所有接口。
-
-`timing-liquidity` 默认定向采集至少 1,100 个自然日的 `daily + adj_factor + index_daily`，用于形成约 3 年前复权价格状态。少于 500 个有效交易日时只允许短期反追高判断，不允许长期横盘、趋势或机会成本结论。
-
-## 两层数据使用
-
-### 全市场基础层
-
-用于构建可复现候选池：
-
-- `stock_basic`：上市状态、名称、行业和市场。
-- `daily` + `adj_factor`：价格、成交量、复权和流动性，仅用于阶段 N 或明确的量化基线。
-- `daily_basic`：估值、市值、换手和股本。
-- `fina_indicator`：盈利质量、成长、杠杆和现金转化。
-
-这层可以按日或财报期增量同步到结构化表。默认使用 `daily_basic + fina_indicator + stock_basic` 建立长期基本面研究池；仅在用户明确要求量化降维时使用 `factor_screen.py --explicit-quantitative-baseline`。
-
-### 候选股研究层
-
-用于解释“为什么值得研究”：
-
-- 三张表与业务分部：`income`, `balancesheet`, `cashflow`, `fina_mainbz`。
-- 盈利预期：`forecast`, `express`, `report_rc`, `disclosure_date`。
-- 机构行为：`stk_surv`, `broker_recommend`, `top10_holders`, `top10_floatholders`。
-- 公司行动与风险：`dividend`, `repurchase`, `share_float`, `stk_holdertrade`, `pledge_stat`。
-- 资金与筹码：`moneyflow`, `cyq_perf`, `cyq_chips`, `top_list`, `top_inst`, `block_trade`, `margin_detail`。
-- 行业与宏观：`index_member_all`, `ths_index`, `ths_member`, `index_daily`, `shibor`, `cn_cpi`, `cn_ppi`, `cn_pmi`, `cn_m`。
-
-这些异构数据写入 `tushare_research_observation`。`dataset + row_hash` 负责内容去重，`business_key + revision` 保留同一业务事实的后续修订，`first_seen_at / last_seen_at / available_at` 支持 point-in-time 查询。接口权限与最近探针结果写入 `tushare_capability`。原始观察是证据材料，不等于长期假设、事件验证或买入结论。
-
-## 工具命令
-
-项目根目录 `.env` 中的 `TUSHARE_TOKEN` 会自动加载；环境变量中的同名值优先。
-
-检查当前权限并写入能力表：
+把 `TUSHARE_TOKEN` 放在环境变量或根目录 `.env`，不要写进命令历史、文档或 Wiki。同步基础数据时可使用：
 
 ```bash
-python3 scripts/tushare_research.py doctor \
-  --as-of 20260710 \
-  --sample-symbol 000001.SZ \
-  --endpoints daily_basic income balancesheet cashflow report_rc stk_surv pledge_stat moneyflow
+python3 scripts/tushare_sync.py 20260101 20260131 \
+  --db-path data/investment_research.sqlite \
+  --daily-basic --stock-basic
 ```
 
-只生成长期优先计划，不联网：
+查看 `--help` 以确认当前支持的表和参数。仅在需要补充趋势线索时显式加入 `--fina-indicator`；它不提供报告最终数字，也不替代 PDF 财报。选择日期、证券范围和可选表时，以研究问题为准；单股分析通常不需要重新同步整个市场，长期监控也不应因为缺一张表而伪造完整性。
+
+`scripts/market_data_store.py` 提供本地 SQLite 的读写和查询能力。缓存改善可复现性和效率，但不保证 point-in-time 完整性：记录数据的获取时间，重要历史判断仍要区分“报告期结束”“公告可得”和“本次研究使用”的时点。
+
+## 模式化采集
+
+先按 `references/investment-modes.md` 选择持有期，再让 `scripts/tushare_mode_data.py` 生成最小数据包。它只获取研究观察，不计算财务报表、不核验财务数字，也不输出交易指令。
 
 ```bash
-python3 scripts/tushare_research.py staged-plan \
-  --symbols 000001.SZ \
-  --as-of 20260710 \
-  --current-profile event-driven market-context timing-liquidity
+python3 scripts/tushare_mode_data.py plan long --symbol 000001.SZ --end-date 20260131
+
+python3 scripts/tushare_mode_data.py fetch medium --symbol 000001.SZ \
+  --start-date 20250801 --end-date 20260131 --cache
+
+python3 scripts/tushare_mode_data.py fetch short --symbol 000001.SZ \
+  --start-date 20260101 --end-date 20260131 --dry-run
 ```
 
-执行定向采集并写入 SQLite：
+| 模式 | 默认核心数据 | 可选或权限敏感数据 | 使用边界 |
+| --- | --- | --- | --- |
+| `long` | `daily`、`adj_factor`、`daily_basic`、`stock_basic`、`dividend` | `share_float`、`top10_holders`、`pledge_stat` | 用于估值历史、资本回报与治理风险线索；财务结论回到 PDF 财报与公告。 |
+| `medium` | `daily`、`adj_factor`、`daily_basic`、`moneyflow`、`forecast`、`express`、`disclosure_date` | `margin_detail`、`top_list`、`top_inst`、`stk_factor_pro` | 用于催化窗口、披露时点、预期变化和是否已定价；业绩数字回到正式披露。 |
+| `short` | `daily`、`adj_factor`、`daily_basic`、`moneyflow`、`stk_limit`、`limit_list_d`、`top_list` | `top_inst`、`margin_detail`、`suspend_d` | 用于价格、成交、资金、涨跌停和可执行性；纳入 T+1、停牌与隔夜风险。 |
+
+`plan` 默认只展示核心接口。加入 `--include-optional` 才会拉取权限敏感接口；也可以用 `--datasets <key> ...` 精确选择计划中的数据集。`fetch` 强制要求 `--end-date`，确保每次研究有明确 `as_of`；`--dry-run` 不读取 token、不请求网络；`--cache` 将原始行与接口可用性写入 SQLite；`--strict` 让不可用接口返回非零状态。接口无权限、返回为空或时间不匹配时，脚本会保留缺口，不能把缺口解释为不存在。
+
+## 通用接口调用
+
+模式化数据包未覆盖的非标准问题，使用 `scripts/tushare_gateway.py`。先根据待验证的假设选择 endpoint 与最小参数集，再明确执行调用；网关不提供模式选择、财务核验、筛选、排名或投资结论。
 
 ```bash
-python3 scripts/tushare_research.py collect \
-  --profile long-term-quality risk-review \
-  --symbols 000001.SZ \
-  --as-of 20260710
+python3 scripts/tushare_gateway.py fetch moneyflow \
+  --params '{"ts_code":"000001.SZ","start_date":"20250101","end_date":"20251231"}' \
+  --fields 'ts_code,trade_date,net_mf_amount'
 ```
 
-读取缓存证据：
+- `fetch <endpoint>`：调用任意有权限的公开 TuShare endpoint。`--params` 或 `--params-file` 必须是一个 JSON 对象；`--fields` 是可选补充。
+- `probe <endpoint>`：用用户提供的小请求检查一个 endpoint 是否可用。它不猜测必填参数，也不尝试全量下载。
+- `cache`：读取之前通过 `fetch --cache` 保存的原始行，可按 dataset、证券和时间过滤。
+- `--dry-run`：验证 endpoint、参数和缓存设置，但不读取 token、不发起网络请求。
+
+`fetch` 和 `probe` 默认不写入 SQLite。只有明确加 `--cache` 时，才保存数据行或权限检查结果；可用 `--dataset` 给缓存指定清晰名称。输出文件仅支持显式指定的 `.csv` 或 `.json` 路径。
+
+示例：先验证一个小请求，再选择性保存原始结果：
 
 ```bash
-python3 scripts/tushare_research.py query \
-  --dataset report_rc \
-  --symbols 000001.SZ \
-  --available-as-of 20260710 \
-  --limit 50
+python3 scripts/tushare_gateway.py probe moneyflow \
+  --params '{"ts_code":"000001.SZ","start_date":"20250101","end_date":"20250131"}'
+
+python3 scripts/tushare_gateway.py fetch moneyflow \
+  --params-file requests/moneyflow.json \
+  --cache --dataset company_moneyflow --output outputs/moneyflow_000001.csv
+
+python3 scripts/tushare_gateway.py cache \
+  --dataset company_moneyflow --symbols 000001.SZ --limit 50
 ```
 
-## 当前能力基线
+不要把 `TUSHARE_TOKEN` 放进 `--params`、参数文件、命令输出或缓存。网关使用环境变量或项目根目录 `.env` 中的 token，与 `tushare_sync.py` 保持一致。
 
-2026-07-11 使用本地 token 做小样本探针，已确认可访问：行情/复权/估值、财务指标与三张表、业务分部、业绩预告/快报、机构调研、卖方盈利预测、分红回购、股东与质押、资金流/龙虎榜/大宗交易/融资融券、筹码分布、行业成分、指数和主要国内宏观数据。
+用户需要保留 TuShare 小型 CSV/JSON 或下载的财报/公告时，可直接归档到 `raw/<domain>/<subject>/<YYYY-MM-DD>/<内容明确的文件名>`，不需要读取或更新 Wiki。只有用户明确要求跨轮复用或维护研究记忆时，才按 `references/wiki-memory.md` 读取并整合到 `wiki/<domain>/<subject>/<内容页面>.md`。大型或多工作表 Excel 留在外部位置或工作区 `data/`。SQLite 缓存用于机械复现；被启用的 Wiki 才承载跨轮次可复用的研究语义。
 
-当前未获得 `irm_qa_sh`, `irm_qa_sz`, `anns_d`, `news` 权限；公告和新闻继续使用交易所/巨潮资讯、公司 IR 与 Webclaw。权限会变化，以最新 `doctor` 结果为准；`empty` 表示接口可调用但样本期无数据，不等于无权限。
+## 使用边界
 
-## 阶段化调用
-
-### 阶段 L
-
-```bash
-python3 scripts/tushare_research.py staged-plan \
-  --symbols 000001.SZ \
-  --as-of 20260710 \
-  --current-profile event-driven market-context timing-liquidity
-```
-
-先确认三张表、业务分部、资本行动、股东/质押、历史估值和风险证据的权限与新鲜度。原始财务数字回到巨潮资讯、交易所或公司 IR 核对后，才裁定 `long_term_status`。
-
-### 阶段 N
-
-仅对 `passed` 或为补齐明确证据的 `needs_evidence` 对象追加：
-
-```text
-event-driven / industry-signal / market-context
--> timing-liquidity
-```
-
-TuShare 无新闻与公告权限时，事件由 `news-intelligence.md` 的 `news_intake` 和官方来源补齐；资金、筹码和卖方数据不能替代事件真实性。
-
-## 研究纪律
-
-1. 先写假设，再取数据；不要看到什么字段就讲什么故事。
-2. profile 决定取什么数据，`research-screening.md` 决定允许进入哪个阶段，两者不能混用。
-3. 全市场基础层与候选研究层分开，避免为每个问题重复下载全市场。
-4. 财务数据按 `ann_date`/`f_ann_date` 做公开时点约束；历史重放用 `--available-as-of` 选择当时公开可得的最新 `revision`。需要严格本地回放时追加 `--observed-as-of`，不能使用当时尚未披露或本地尚未观察到的后续修订。
-5. 卖方报告、机构调研、资金流和筹码只用于预期差与拥挤判断，不视为事实证明。
-6. 技术指标只回答流动性、风险、拥挤和节奏，不回答公司是否值得长期持有。
-7. 长期价格状态同时展示股东总回报、分红、估值倍数变化和相对基准，避免把价格横盘误写成零回报。
-8. TuShare 是标准化二级来源；最终财务结论仍需回原始年报、公告或公司 IR 核对。
-9. 必需接口失败时写入 `process_gaps` 并保持研究未完成；只有经济上会改变结论的未知项进入 `blocking_evidence`。
-10. 阶段 N 数据不能反向覆盖阶段 L 的客观红线；结构性新事实只能触发重跑阶段 L。
-
-## 数据计划输出契约
-
-```text
-stage｜研究 profile｜thesis_id｜投资假设｜候选范围｜as_of
-必需数据集｜可选数据集｜接口权限｜时间窗口｜预计调用数
-required_for_gate｜已缓存/需刷新｜freshness_status
-缺失输入｜不可用接口｜替代来源｜官方核验要求
-技术面的角色｜下一步验证动作｜允许的状态转换
-```
+- 把 TuShare 视为标准化二级来源。用于报告最终论证的收入、利润、现金流、资产负债表和关键公司行为，必须引用交易所、巨潮资讯或公司 IR 的 PDF/原文；不要用脚本或 TuShare 复算、核验或替代这些事实。
+- 使用 `daily_basic` 的 PE、PB、股息率、市值和股本字段时，记录交易日、复权口径、单位、币种和获取时间。把它们作为市场估值观察，不把它们改写为财报事实。
+- 不要从缺失、异常或修订字段反推出积极结论。记录数据缺口及其对假设的影响。
+- 同一数据可以支持多种解释。Agent 应解释它为什么与当前问题有关，而不是把接口输出直接转写为评级或行动。

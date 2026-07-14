@@ -1,152 +1,39 @@
-# 事件信号与 `news_intake`
+# 新闻与事件研究
 
-本文件定义按需事件监控和新闻信号卡。格隆汇、财联社等只是来源适配器；`news_intake` 的职责是发现变化并组织待核实线索，不是按新闻热度选股，也不是全文新闻仓库。
+新闻用于发现要核实的问题，不用于按热度生成推荐。面对事件时，先确认发生了什么、信息在何时可得，再判断它是否会改变某项投资假设。
 
-## 何时调用
+## 处理顺序
 
-以下情况按需拉取最近 24–72 小时信号：
+1. **收集线索**：先从公司、交易所、监管或政府的原始页面和 PDF 获取公告、政策和新闻原文；动态页面用浏览器定位。静态页面无法直接获取或需要清理正文时，再按 `references/webclaw.md` 使用 `webclaw` 作为补充或回退，记录标题、来源、时间、涉及主体和原始链接。区分公告、采访、二手报道、传闻和市场评论。
+2. **核实事实**：优先公司公告、交易所、监管机构、政府部门、原始文件或至少一条独立可靠来源。无法核实就明确标为未证实。
+3. **解释传导**：说明事件影响收入、成本、供需、竞争、资本配置、资产负债表、估值或流动性的路径、方向、量级和持续时间。
+4. **检查定价**：比较事件发生、披露和市场反应的时间，判断哪些预期可能已反映在价格中。
+5. **更新判断或研究计划**：只有当事件改变核心假设、情景、估值区间、风险或复核优先级时才进入结论；否则保留为背景或跟踪项。
 
-- 用户询问近期事件、价格异动、政策或行业变化。
-- `event-driven`、`industry-signal` 或 `market-context` 研究需要当前信息。
-- 已有长期投资假设需要监控催化、证伪或执行进度。
-- 持仓出现异常价格、成交、监管或治理风险。
-
-长期质量研究、历史财务比较或纯估值复核没有当前事件依赖时，不必抓取。纯异动归因可以直接生成归因结果；一旦用户进一步问“能不能买”，候选必须回到 `research-screening.md` 的阶段 L。
-
-## 来源与权限
-
-来源分三层：
-
-1. 快讯雷达：格隆汇、财联社、第一财经、路透社、彭博社、财新等，只用于发现线索；付费源仅在拥有合法访问权限时使用。
-2. 官方确认：国务院、央行、统计局、部委、证监会、交易所、巨潮资讯、海外监管机构和公司 IR。
-3. 独立核对：可靠财经媒体、行业协会、产业数据及上下游公司披露。
-
-格隆汇公开快讯的当前适配器示例：
-
-```bash
-webclaw "https://www.gelonghui.com/live" \
-  --format json \
-  --include '.live-data-item:has(.desc.is-weight)'
-```
-
-CSS 选择器属于可变来源配置，不是业务规则。调用前检查页面结构和获取时间；失效时记录 adapter failure 并切换其他雷达或官方检索，不静默返回“无事件”。
-
-项目入口使用参数数组调用 Webclaw，不经过 shell。离线材料先 `parse`，确认结构和去重结果后再 `ingest`；`query` 同时返回信号卡和假设映射：
-
-```bash
-python3 scripts/news_intake.py fetch --since-hours 72
-python3 scripts/news_intake.py parse --input authorized_webclaw.json --since-hours 72
-python3 scripts/news_intake.py ingest --input authorized_webclaw.json --since-hours 72
-python3 scripts/news_intake.py query --important-only
-```
-
-`news_intake` 可以：
-
-- 按时间、关键词、公司、行业和长期假设检索公开信号。
-- 去重、分类、抽取实体和映射长期假设。
-- 记录官方核实状态、价格反应和未解决问题。
-- 提高研究优先级或触发重跑阶段 L/N。
-
-`news_intake` 不可以：
-
-- 按新闻次数、热度或“重要”标签提高长期质量评价。
-- 用单一媒体标题替代原始公告或官方政策。
-- 未完成量级和持续性判断就输出“利好/利空”。
-- 因近期没有新闻而降低长期公司评价。
-- 绕过登录、验证码、付费墙、robots/站点条款或访问频率限制。
-- 自动执行交易或把信号直接变成 `staged_buy`。
-
-## 信号卡契约
+## 事件记录建议
 
 ```text
-signal_id
-published_at
-event_at
-retrieved_at
-source_name
-source_type = radar / official / independent
-source_url
-headline
-normalized_event
-entities[]
-industries[]
-thesis_id
-impact_direction = positive / negative / mixed / unknown
-financial_driver = revenue / cost / margin / cashflow / WACC / risk / unknown
-estimated_magnitude
-expected_duration
-price_reaction_since_event
-priced_in_assessment
+event
+source / original_link
+event_time / published_at / retrieved_at
 verification_status
-verification_sources[]
-open_questions[]
-content_hash
-expires_at
+affected_subject
+affected_hypothesis
+transmission_path
+estimated_magnitude_and_duration
+market_reaction_context
+counter_evidence
+next_check
 ```
 
-- `estimated_magnitude` 可以是范围或“不可得”，不能为了完整而伪造精确数字。
-- `expected_duration` 至少区分一次性、0–6 个月、6–24 个月和 3–5 年结构性影响。
-- 没有 `thesis_id` 的事件只能保存在资讯记录；若它产生新候选，先建立新的阶段 L 任务。
-- `price_reaction_since_event` 使用可复算的事件前后价格，并标明基准指数或行业相对表现。
+这些字段是分析提醒，不是固定数据库 schema。根据事件类型增加合同规模、政策文本、产品、地区、客户、产能或财务口径等信息。
 
-## 去重与状态机
+## 常见误区
 
-优先使用原始链接、规范化标题、实体、事件时间桶和内容哈希去重。转载同一官方事实的多篇报道只保留一张主信号卡，并把其他来源放入 `verification_sources`。
+- 将快讯、传闻或转载当作已证实事实。
+- 把“利好/利空”标签当作传导分析，忽略量级、持续时间和价格反应。
+- 只寻找支持原有观点的事件，忽略假设被削弱或证伪的证据。
+- 用新闻数量、热度或社交讨论度取代商业质量、估值和组合判断。
+- 将未经核实的事件作为既定事实写入 Wiki 或长期研究记录；若线索有复用价值，保留原始资料、来源和未核实状态。
 
-```text
-raw
--> deduplicated
--> pending_verification
--> verified / rejected
--> thesis_mapped
--> active / expired
-```
-
-- `pending_verification`：只用于待办和研究优先级，不进入最终证据。
-- `verified`：有官方原始来源，或至少两个独立可靠来源相互印证。
-- `rejected`：来源错误、重复、失实、与标的无关或无法确认。
-- `active`：仍可能影响长期假设或当前买点。
-- `expired`：时效已过、影响已兑现、已证伪或不再相关；保留记录，不进入当前上下文。
-
-## 五项验证门
-
-事件只有同时完成以下检查，才可以影响阶段 N；结构性事件还必须触发阶段 L 复核：
-
-1. **真实性**：官方原始来源，或两个独立可靠来源交叉印证。
-2. **关联性**：映射到具体 `thesis_id` 和收入、成本、利润、现金流、资本成本或风险假设。
-3. **量级**：估计方向和大致量级；无法估计时明确列为关键未知。
-4. **持续性**：判断一次性、周期性或结构性，最好能跨越至少一个财报期。
-5. **预期差**：检查公告前后价格、卖方预期和市场共识，判断是否已充分定价。
-
-任何一项关键检查未完成时，默认 `entry_action = wait_evidence`，而不是用较弱信号补齐叙事。
-
-## 与双阶段状态机的关系
-
-| 信号类型 | 允许动作 |
-|---|---|
-| 无法映射长期假设 | 保存为资讯或新建研究任务，不改结论 |
-| 已核实的短期催化 | 更新阶段 N、价格和等待条件 |
-| 已核实的证伪风险 | 降低置信度，必要时重跑阶段 L |
-| 可能改变行业结构或长期现金流 | 重跑阶段 L，不直接升级买入动作 |
-| 纯情绪或价格解释 | 只用于归因和拥挤判断 |
-
-事件不能提高 `long_term_status`；只有把事件转化为原始事实证据并重新完成阶段 L，才可能更新长期判断。
-
-## 最小运行记录
-
-每次调用记录：
-
-```text
-query_intent
-time_window
-sources_attempted
-sources_succeeded
-signals_found
-signals_deduplicated
-signals_verified
-signals_mapped
-access_failures
-retrieved_at
-```
-
-若站点不可访问，使用其他雷达或官方来源降级，不让格隆汇成为单点依赖。只保存结构化信号卡、必要短摘录和原始链接，不建立无边界全文新闻库。
+用户要求保留可复用的事件材料时，按主要影响归入 `raw/<domain>/<subject>/<YYYY-MM-DD>/<内容明确的文件名>`，并保留来源与核验状态；未经核实的线索必须明确标记，不能写成既定事实。归档原始材料不要求读取或更新 LLM Wiki。

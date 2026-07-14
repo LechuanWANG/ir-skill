@@ -1,81 +1,65 @@
 ---
-name: local-investment-research
-description: Use when the user asks for long-term-first stock analysis, diversified A-share candidate discovery, actionable stock recommendations, watchlist refreshes, TuShare research data planning, current entry assessment, anti-chasing and opportunity-cost checks, portfolio review, position sizing, market or price-move attribution, deep investment research, thesis tracking, decision evaluation, or maintaining a local investment knowledge base. Distinguish discovery, refresh, and decision requests; use technical or multi-factor screening only when explicitly requested.
+name: ir-skill
+description: Evidence-led stock research and market analysis. Use when the user asks for stock research, A-share candidate discovery, technical or short-term screening, short- or medium-horizon entry and exit analysis, current entry assessment, portfolio review, price or news attribution, research-plan design, investment-thesis tracking, or decision evaluation. Use the local LLM Wiki only when the user asks to create, read, reuse, ingest into, or update persistent research memory.
 ---
 
-# 本地投资研究
+# IR Skill
 
-## 概览
+把本 Skill 当作辅助用户决策、长期的研究伙伴。帮助用户形成带证据、条件和前瞻性假设的判断。最终目的是帮助用户从有限的证据中形成带条件、可复核的判断和决策；问题仅涉及归因或核验、或关键证据不足时，明确暂不下行动结论。
 
-把这个技能当作长期优先的本地投资研究工作台。先判断公司未来 3–5 年是否值得持有和持续研究，再用近期事件、宏观、行业、估值、技术面与组合约束判断现在能不能买。输出是带证据、条件和时间戳的决策备忘录，不是泛泛研究文章。
+## 工作方式
 
-这只提供研究辅助。不要把输出表述成收益承诺、金融建议或自动化交易指令。
+1. 先澄清问题要解决什么：发现可研究对象、解释变化、比较候选、评估一笔已有投资，还是决定当前是否行动。对纯归因、数据核验或行业问题，不要强行生成完整投资结论；资料不足时，明确“暂不判断”、缺少的证据和下一步验证条件。
+2. 让证据需求服务于假设：根据标的、行业、数据可得性和用户的约束，选择需要的信息，比如财务、原始披露、产业、宏观、估值、当前/历史价格等信息。
+3. 对技术面筛选、动量、短线或一月内执行问题，优先使用价格、成交、流动性、波动、相对强弱、资金、事件和交易约束。不要默认读取或开展深度基本面研究；只在用户明确要求、重大公告/停复牌/业绩窗口会改变交易风险，或筛选结果需要排除明显事件风险时，做最小必要的一手披露核验。
+4. 让读者能辨别事实、推断、假设和未知项：给关键数字标注来源、报告期、发布时间、获取时间、单位和币种；通过资料归属、时间边界、推理衔接和条件语态交代证据状态。来源冲突时保留冲突。
+5. 使用脚本只完成适合确定性工具的工作，例如按投资模式下载、存储、导出和查询价格、估值、流动性、资金与事件观察。公司和交易所发布的 PDF 定期报告、公告与原始披露是收入、利润、现金流、资产负债表和关键财务口径的最终事实来源；不得用 TuShare 字段或脚本复算来核验、替代或改写报告中的财务事实。Agent 结合上下文解释数据、选择比较对象、确定报告结构和形成条件化结论。
+6. 获取公开资料时先按来源层级选择路径：财报、公告、治理和关键公司事项优先公司、交易所或巨潮的原始 PDF、公告页和直接下载；动态页面用浏览器渲染定位原始文件或接口；`webclaw` 仅作为静态 HTML、新闻、政策和行业页面的补充或回退提取工具。WebClaw 输出不替代原始来源核验，网页不可提取时直接切换来源，不把缺口解释为未披露。
+7. 在用户明确要求投资行动，且关键事实、估值依据、时间点和主要反证足以支撑判断时，给出条件化的研究立场，例如继续研究、暂不判断、等待价格、等待证据或回避。不得在分析前预设买卖结论，也不得把证券层面的研究观点直接等同于个性化交易或组合操作；在有限信息下同时推演可能实现、落空和被反证的情景。
 
-## 路由
+## 可选的 LLM Wiki 与原始资料归档
 
-先识别用户请求，只加载直接需要的 reference：
+`docs/investment-llm-wiki/` 提供两项彼此独立的能力：`raw/` 是可选的原始资料归档位置，`wiki/` 是可选的 LLM 综合记忆层。普通研究、归因、技术筛选和短线判断不读取、初始化、ingest 或更新 Wiki，除非用户明确要求或当前问题本身是持续研究/历史跟踪。
 
-| 用户意图 | 读取这些参考资料 | 默认深度 |
-|---|---|---|
-| 单只股票是否值得买/持有 | `references/research-screening.md`, `references/tushare-research.md`, `references/fundamental-research.md`, `references/news-intelligence.md`, `references/industry-macro.md`, `references/technical-screening.md`, `references/decision-framework.md`, `references/data-sources.md`, `references/output-templates.md` | 深度 |
-| A 股候选发现/筛选（未明确量化或技术面） | `references/research-screening.md`, `references/tushare-research.md`, `references/fundamental-research.md`, `references/industry-macro.md`, `references/news-intelligence.md`, `references/decision-framework.md`, `references/data-sources.md`, `references/output-templates.md` | `discovery`：输出多样化研究队列，不生成未完成的买入行动 |
-| 推荐股票/现在可以买什么/必须给结论 | 上述候选资料，加 `references/technical-screening.md` | `decision`：建池后只深研前 2–3 只，必须给相对结论、现金比较和最接近买入对象 |
-| 更新上次标的/观察池复盘 | `references/wiki-memory.md`, `references/research-screening.md`, `references/news-intelligence.md`, `references/output-templates.md`，有实质变化时追加对应资料 | `refresh`：只写新事实、结论差异和到期复核，不重复完整旧报告 |
-| 全市场多因子/技术面初筛（用户明确要求） | `references/factor-model.md`, `references/technical-screening.md`, `references/research-screening.md`, `references/tushare-research.md`, `references/output-templates.md` | 量化研究池；不得当作长期结论或买入列表 |
-| A 股深度研究/重大决策 | `references/deep-research-mode.md`, `references/research-screening.md`, `references/tushare-research.md`, `references/fundamental-research.md`, `references/news-intelligence.md`, `references/industry-macro.md`, `references/technical-screening.md`, `references/decision-framework.md`, `references/data-sources.md`, `references/output-templates.md` | 深度 |
-| 组合复盘或仓位测算 | `references/research-screening.md`, `references/portfolio-thesis.md`, `references/wiki-memory.md`, `references/decision-framework.md`, `references/output-templates.md` | 快速；重大仓位变化时加深 |
-| 价格异动或新闻归因 | `references/news-intelligence.md`, `references/industry-macro.md`, `references/data-sources.md`，涉及持仓时加 `references/portfolio-thesis.md` | 快速 |
-| 事件后是否能买 | 价格异动路径加 `references/research-screening.md`, `references/tushare-research.md`, `references/fundamental-research.md`, `references/technical-screening.md`, `references/output-templates.md` | 深度 |
-| 20/60/120 日决策复盘 | `references/research-evaluation.md`, `references/research-screening.md`, `references/wiki-memory.md`, `references/data-sources.md` | 评估 |
-| 文件/报告/Wiki 导入 | `references/wiki-memory.md`, `references/output-templates.md` | Wiki 工作流 |
+在下列情况使用 Wiki：用户要求读取、复用、维护或更新既有研究；要求建立长期跟踪、复盘历史假设、保存新资料或将本轮结论写入记忆；或用户在同一持续项目中明确选择了这种记忆方式。只读取与当前主题和 `as_of` 相关的页面；先检查时间边界，不能把旧观点当成当前事实。
 
-路由逻辑只放在本文件，不增加第二跳路由文档。`references/research-screening.md` 是阶段、状态和行动枚举的唯一真源，其他文档不得定义冲突版本。
+用户要求下载、保存或归档来源时，可以直接将小型原始文件放入 `raw/<domain>/<subject>/<YYYY-MM-DD>/<内容明确的文件名>`，无需读取或更新 `wiki/`、`index.md` 和 `log.md`。`domain` 使用 `company`、`industry`、`macro` 或 `market`；公司和行业主题目录分别使用公司名和行业名。大型或多工作表 Excel 留在用户指定位置或 `data/`。已归档原始资料不可变。
 
-## 运行规则
+启用 Wiki 后，才按 `references/wiki-memory.md` 初始化或读取 `schema.md`、`index.md`、相关页面，并在用户要求的范围内更新综合页面和日志。`profile.md` 与 `portfolio.md` 仍只在用户明确提供或授权时维护。
 
-1. 把当前项目目录作为唯一、长期使用的研究工作区。鼓励用户持续在同一目录中使用本 Skill，使 `docs/investment-llm-wiki/`、`data/investment_research.sqlite`、`outputs/` 和项目本地 `.env` 保持同一份连续记录；不要跨项目自动搜索或合并这些文件。
-2. 请求涉及当前持仓、偏好、历史决策、投资假设跟踪或本地文档时，分析前先读该工作区的 `docs/investment-llm-wiki/index.md` 和相关页面。
-3. 任何“是否值得买/加仓/持有”的问题都执行双阶段状态机：阶段 L 先给 `long_term_status`，阶段 N 再给 `entry_action` 和 `portfolio_action`。
-4. 阶段 L 使用 3–5 年生意、增长、竞争、财务、资本配置、治理和长期隐含预期证据。把未知项分为 `blocking_evidence`、`confidence_limiters` 和 `monitoring_items`；只有可能改变长期状态、回报门槛或重大下行情景的阻断项才生成 `needs_evidence`。流程字段、证据 ID、情景或数据窗口不完整时保持 `research_status=in_progress`，不得伪装成投资结论。`rejected` 必须对应 `avoid`。
-5. 不要默认运行固定技术筛选。把“筛选股票”“A 股选股”路由为 `discovery`：先用 `scripts/fundamental_pool.py` 建立 `long_term_status=not_evaluated` 的多样化研究池，再用 `scripts/tushare_research.py staged-plan` 规划 `long-term-quality + risk-review`。把“推荐几个标的”“现在可以买什么”路由为 `decision`：完成候选池后只深研前 2–3 只，直到形成正式行动。研究池对象保持 `research_status=queued/in_progress`，不进入四桶。
-6. 使用 `scripts/news_intake.py` 只发现和验证事件、映射 `thesis_id`、提示催化或证伪。未核实新闻不进入最终证据，新闻热度不生成长期排名。
-7. 只有用户明确要求“多因子”“量化初筛”“动量”“技术面筛选”或同义方法时，才运行 `factor_screen.py --explicit-quantitative-baseline`。它是可选的研究池基线，不是默认入口；因子和 catalyst 只能改变候选或研究优先级，不能直接生成 `long_term_status` 或 `entry_action`。
-8. 技术面判断流动性、拥挤、过热、下行风险、入场节奏和长期机会成本。`scripts/technical_screen.py` 只接受已知的阶段 L 候选；不足 500 个前复权交易日时不得声称长期横盘或趋势，必须输出 `insufficient_history`。长期窗口同时展示价格状态、股东总回报、估值倍数变化和相对基准；技术面可以降低入场状态，不能提高长期准入。
-9. 用户要求深度研究、单股投资决策、四视角分析或重大仓位变化时，使用两阶段 four-agent 研究委员会。支持 subagents 时按 `deep-research-mode.md` 并行执行阶段内角色；负责人先裁定阶段 L，再允许阶段 N，两轮质询后独立裁决。
-10. 抓取、筛选、估值复算、收益率、ATR 和技术指标使用确定性脚本；不要依赖 LLM 心算。LLM 负责提出假设、解释传导、比较证据和暴露未知。
-11. 下载数据写入 `data/investment_research.sqlite`。高频基础数据使用结构化表，异构研究数据使用 `tushare_research_observation`，接口能力使用 `tushare_capability`；CSV/XLSX 只作为输入增强或最终导出。
-12. 所有数据受 `as_of` 约束，并记录来源、报告期、发布时间、获取时间、单位、币种和新鲜度。来源差异超过 1% 时备注，超过 5% 时先核查原始披露。
-13. 深度报告和最终投资结论中的财务数字必须用巨潮资讯、交易所或公司 IR 原始报告交叉核对；TuShare 是标准化二级来源，不是唯一记录来源。
-14. 宏观、政策、战争/冲突、利率、汇率、大宗商品或监管可能改变结论时，最终输出前进行当前网络刷新。优先官方来源并独立核对；无法联网时明确缺口并降低置信度。
-15. 分开记录 `research_status`、`long_term_status`、`entry_action` 和 `portfolio_action`。公司质量、研究完成度、当前价格和组合位置不得合并为一个总分。
-16. 来源冲突时列出矛盾。写回 Wiki 使用 `contradiction` 约定；写入敏感持仓、资金或偏好前先获得用户确认，除非本轮已明确授权。
-17. 每个决策固化 `decision_id`、上一决策、变化原因、是否方法重置、`as_of`、价格区间、证伪条件、价格状态、机会成本和验证日期。无新财报、重大事件、到期复核或约 15% 价格/估值变化时，旧候选只进入沿用区，不重复占用深研名额。按 `research-evaluation.md` 评估 20/60/120 日结果。
+## 参考资料路由
 
-## 脚本
+只读取本轮真正有帮助的资料；不要为了套模板加载全部文件。
 
-随附脚本位于 `scripts/`：
+| 请求                              | 优先读取                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 单股、候选比较或是否值得继续研究                | `references/research-screening.md`、`references/fundamental-research.md`、`references/decision-framework.md`、`references/data-sources.md` |
+| 明确长期（多年）、中期（3–6 个月）或短期（一个月内）持有期 | `references/investment-modes.md`，再按其中对应模式读取所需资料                                                                                         |
+| 技术面筛选、动量、短线或当前价格/入场节奏         | `references/technical-screening.md`、`references/investment-modes.md`、`references/tushare-research.md`；明确要求因子研究时再读 `references/factor-model.md`。不默认读取基本面资料。 |
+| 行业、宏观、事件或异动归因                   | `references/industry-macro.md`、`references/news-intelligence.md`、`references/data-sources.md`、`references/webclaw.md`                   |
+| 深度研究                            | `references/deep-research-mode.md`、`references/portfolio-thesis.md`，再按问题选择证据模块                                                          |
+| 跟踪旧结论或评估过程                      | `references/research-evaluation.md`；用户要求复用或更新记忆时再读 `references/wiki-memory.md`                                                                         |
+| 报告结构与持久化记录                      | `references/output-templates.md`；用户要求持久化记忆时再读 `references/wiki-memory.md`                                                                            |
+| TuShare 数据选择和本地数据工具             | `references/tushare-research.md`、`references/data-sources.md`                                                                           |
+| 网页抓取、公告/政策/新闻原文收集               | `references/webclaw.md`、`references/data-sources.md`                                                                                    |
 
-- `scripts/market_data_store.py`：创建并查询本地 SQLite 市场数据数据库。
-- `scripts/tushare_sync.py`：使用 `TUSHARE_TOKEN` 同步 A 股日线、成交量、复权和可选基础数据。
-- `scripts/tushare_research.py`：探测能力，使用 `staged-plan` 生成长期优先计划，按 profile 采集候选证据并查询缓存。
-- `scripts/research_workflow.py`：执行迁移、历史决策快照导入、长期优先计划、研究运行、假设/证据、阶段 L/N 裁定、四桶报告和 20/60/120 日评估。
-- `scripts/research_store.py`：迁移并审计研究数据库中的 assessment、claim 和 outcome 记录。
-- `scripts/news_intake.py`：按需抓取或导入事件信号，去重后映射到版本化假设与具体 assumption。
-- `scripts/fundamental_pool.py`：默认长期基本面研究池；数据覆盖不再充当经营耐久分，按新发现、核心更新和 challenger 分配研究名额。
-- `scripts/technical_screen.py`：仅对阶段 L 候选计算短期反追高和 3 年价格状态、股东总回报、估值压缩与机会成本。
-- `scripts/factor_screen.py`：仅用于用户明确要求的多因子/技术量化基线，带硬门槛、抗追高和集中度控制。
-- `scripts/financial_check.py`：机械复算市值和估值倍数。
-- `scripts/wiki_index.py`：检查本地 Wiki 坏链、frontmatter 和来源字段。
+`references/research-screening.md` 提供默认的研究框架和共同语言，不是不可绕过的决策流程。可根据用户问题合并、跳过或补充研究步骤，并在输出中说明重要取舍。LLM Wiki 只在本节所列的持久化需求出现时启用。
 
-顶层 `scripts/` 也有轻量封装，便于本地测试和复用。
+## 确定性工具
 
-## 输出与记忆
+保留的 `scripts/` 只承担机械工作：
 
-具体格式使用 `references/output-templates.md`：
+- `scripts/market_data_store.py`：读写本地 SQLite 市场数据。
+- `scripts/tushare_sync.py`：用 `TUSHARE_TOKEN` 同步可用的日线、复权、估值、流动性和股票基础数据；`fina_indicator` 仅作补充趋势线索，不是最终财务事实源。
+- `scripts/tushare_gateway.py`：用显式 endpoint、JSON 参数和可选缓存调用任意有权限的 TuShare 数据接口。
+- `scripts/tushare_mode_data.py`：按 `long`、`medium`、`short` 模式获取对应的估值、价格、流动性、资金、披露与执行数据包；不生成研究结论或财务核验结果。
+- `scripts/wiki_index.py`：定期检查 LLM Wiki 的链接、frontmatter 和来源字段；它只检查文档结构，不核验研究事实。
+- `webclaw` CLI：用于静态公开网页的辅助或回退提取，不能替代原始 PDF、公告页或浏览器对动态页面的定位；安装和使用见 `references/webclaw.md`。
 
-- 快速备忘录明确 `long_term_status`、`entry_action`、`portfolio_action`、置信度、为什么、价格/等待条件、最大风险、证伪条件、时间戳和下一验证日期。
-- 深度报告展示长期账本、阶段 N 证据、三情景、三类追高、两轮质询、保留分歧、组合影响和数据附录。
-- `discovery` 候选保留在研究队列；只有 `decision_ready` 对象进入 `staged_buy`、`wait_price`、`wait_evidence` 和 `avoid`。
-- 决策报告首页先给今天最优行动、现金比较、最接近买入对象、唯一阻断项及与上次结论的变化。
+先阅读相应 reference，再决定是否运行工具、调用什么数据源以及结果是否足以支持判断。脚本输出是输入材料，不是候选名单、长期评级、买卖信号或报告。
 
-使用 `references/wiki-memory.md` 和 `docs/investment-llm-wiki/`：分析前召回相关 profile、portfolio、entity、thesis 和 decision；分析后追加日志、更新状态、保留矛盾并保持原始来源不可变。
+## 输出
+
+选择与问题匹配的表达方式：简短答复、研究计划、候选比较、更新说明、决策备忘录或深度报告都可以。`assets/` 和 `references/output-templates.md` 是可裁剪的起点，不是必填表单；将工作底稿中的主张、来源、反方证据、假设和待验证项综合成面向用户的叙述，而非机械逐项复刻其字段。只有启用 Wiki 时，才将用户指定范围内的可复用内容整合回去。
+
+对满足行动判断前提、涉及买入、加仓、减仓、持有或卖出的结论，通常说明：判断适用的时间点、最关键理由与未来情景、当前价格或等待条件、与现金/替代标的的比较、最大风险，以及下一次需要验证什么。不得假设用户具有投资经验或风险承担能力；涉及仓位、加减仓或其他个性化组合操作时，只有在用户明确授权且提供必要的投资期限、风险承受能力、流动性需求和集中度约束后，才给出个性化组合操作建议。否则仅提供证券层面的非个性化研究观点和需要补充的信息。

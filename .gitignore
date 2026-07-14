@@ -2,3 +2,15 @@
 .codebase-memory/
 __pycache__/
 *.py[cod]
+.env
+
+# Local research data, generated outputs, and editor state.
+.obsidian/
+data/
+docs/investment-llm-wiki/
+output/
+reports/
+tmp/
+*.sqlite
+*.sqlite-*
+.Rhistory

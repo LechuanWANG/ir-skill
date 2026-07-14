@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">IR Skill logo</title>
+  <desc id="description">An abstract, cyber-inspired investment research monogram with circuit nodes and an upward signal line.</desc>
+  <defs>
+    <linearGradient id="background" x1="56" y1="42" x2="456" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101B29"/>
+      <stop offset="0.52" stop-color="#071019"/>
+      <stop offset="1" stop-color="#03080E"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="116" y1="365" x2="410" y2="132" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31E5C9"/>
+      <stop offset="0.52" stop-color="#4CCBFF"/>
+      <stop offset="1" stop-color="#B4F4FF"/>
+    </linearGradient>
+    <linearGradient id="monogram" x1="145" y1="126" x2="376" y2="390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B1FBEE"/>
+      <stop offset="1" stop-color="#2D97EA"/>
+    </linearGradient>
+    <radialGradient id="ambient" cx="0" cy="0" r="1" gradientTransform="translate(383 141) rotate(133.325) scale(303.347)">
+      <stop stop-color="#2EC7E0" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#2EC7E0" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#5E7A91" stroke-opacity=".16" stroke-width="1"/>
+      <circle cx="1" cy="1" r="1.4" fill="#91C7DC" fill-opacity=".28"/>
+    </pattern>
+    <filter id="glow" x="-45%" y="-45%" width="190%" height="190%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-65%" y="-65%" width="230%" height="230%">
+      <feGaussianBlur stdDeviation="15"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="100" fill="url(#background)"/>
+  <rect x="28" y="28" width="456" height="456" rx="76" fill="url(#ambient)"/>
+  <rect x="39" y="39" width="434" height="434" rx="65" fill="url(#grid)"/>
+  <rect x="39.5" y="39.5" width="433" height="433" rx="64.5" fill="none" stroke="#83B9D1" stroke-opacity=".28"/>
+
+  <g fill="none" stroke="#4C91AE" stroke-linecap="round" stroke-width="2">
+    <path d="M85 151H128V112H184" stroke-opacity=".42"/>
+    <path d="M100 405H152V432H211" stroke-opacity=".28"/>
+    <path d="M328 88V121H409V183" stroke-opacity=".36"/>
+    <path d="M408 329H431V395H375" stroke-opacity=".26"/>
+    <path d="M69 285H111" stroke-opacity=".24"/>
+    <path d="M252 424V452" stroke-opacity=".2"/>
+  </g>
+  <g fill="#71D9E4">
+    <circle cx="85" cy="151" r="3"/>
+    <circle cx="184" cy="112" r="3"/>
+    <circle cx="100" cy="405" r="3"/>
+    <circle cx="211" cy="432" r="3"/>
+    <circle cx="328" cy="88" r="3"/>
+    <circle cx="409" cy="183" r="3"/>
+    <circle cx="431" cy="395" r="3"/>
+    <circle cx="69" cy="285" r="3"/>
+  </g>
+
+  <g fill="none" stroke="url(#monogram)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M155 150V362" stroke-width="24"/>
+    <path d="M126 150H184" stroke-width="14"/>
+    <path d="M126 362H184" stroke-width="14"/>
+    <path d="M246 362V150H307C348 150 369 171 369 208C369 245 348 266 307 266H246" stroke-width="18"/>
+    <path d="M304 266L383 362" stroke-width="18"/>
+  </g>
+
+  <path d="M104 364L174 319L226 334L289 260L338 273L410 143" fill="none" stroke="#2DE3C6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".48" stroke-width="18" filter="url(#softGlow)"/>
+  <path d="M104 364L174 319L226 334L289 260L338 273L410 143" fill="none" stroke="url(#signal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+  <g fill="#D9FFFF" filter="url(#glow)">
+    <circle cx="104" cy="364" r="7"/>
+    <circle cx="174" cy="319" r="7"/>
+    <circle cx="226" cy="334" r="7"/>
+    <circle cx="289" cy="260" r="7"/>
+    <circle cx="338" cy="273" r="7"/>
+    <circle cx="410" cy="143" r="9"/>
+  </g>
+  <path d="M390 145L410 143L404 164" fill="none" stroke="#D9FFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="7"/>
+
+  <g fill="#C3FDF6" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="700" letter-spacing="3">
+    <text x="88" y="98">EVIDENCE</text>
+    <text x="340" y="428">IR//01</text>
+  </g>
+</svg>
