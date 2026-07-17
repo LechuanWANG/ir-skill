@@ -189,7 +189,7 @@ def fetch_stock_basic(pro) -> pd.DataFrame:
 
 def fetch_daily_basic(
     pro,
-    symbols: Sequence[str],
+    symbols: Sequence[str] | None,
     start_date: str,
     end_date: str,
     *,
@@ -197,14 +197,30 @@ def fetch_daily_basic(
     days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK,
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
 ) -> pd.DataFrame:
-    """Fetch TuShare daily_basic rows by trade date and symbol batch."""
+    """Fetch TuShare daily_basic rows by trade date.
+
+    TuShare returns the complete market snapshot when ``trade_date`` is used
+    without ``ts_code``. It does not reliably support a comma-separated stock
+    batch for this endpoint, so an explicit symbol list is fetched one symbol
+    at a time instead.
+    """
     frames: list[pd.DataFrame] = []
     for date_start, date_end in chunk_date_range(start_date, end_date, days_per_chunk):
         for trade_date in pd.date_range(date_start, date_end, freq="D"):
             trade_date_text = trade_date.strftime(DATE_FMT)
-            for batch in chunk_symbols(symbols, batch_size):
+            if symbols is None:
                 frame = pro.daily_basic(
-                    ts_code=",".join(batch),
+                    trade_date=trade_date_text,
+                    fields=DAILY_BASIC_FIELDS,
+                )
+                if not frame.empty:
+                    frames.append(frame)
+                time.sleep(sleep_seconds)
+                continue
+
+            for symbol in symbols:
+                frame = pro.daily_basic(
+                    ts_code=symbol,
                     trade_date=trade_date_text,
                     fields=DAILY_BASIC_FIELDS,
                 )
@@ -261,7 +277,7 @@ def sync_factor_data(config: SyncConfig, symbols: Sequence[str] | None = None) -
     token = get_tushare_token()
     ts = _load_tushare()
     pro = ts.pro_api(token)
-    selected = list(symbols) if symbols else list_active_symbols(pro)
+    selected = list(symbols) if symbols else None
     row_counts: dict[str, int] = {}
 
     if config.stock_basic:
@@ -279,9 +295,10 @@ def sync_factor_data(config: SyncConfig, symbols: Sequence[str] | None = None) -
         )
         row_counts["daily_basic"] = write_daily_basic(daily_basic, db_path=config.db_path, source="tushare")
     if config.fina_indicator:
+        fina_symbols = selected if selected is not None else list_active_symbols(pro)
         fina_indicator = fetch_fina_indicator(
             pro,
-            selected,
+            fina_symbols,
             config.start_date,
             config.end_date,
             batch_size=config.batch_size,

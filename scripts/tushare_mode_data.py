@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -14,15 +14,18 @@ import pandas as pd
 
 from market_data_store import (
     DEFAULT_DB_PATH,
-    write_research_observations,
+    load_daily_matrices,
+    persist_tushare_collection,
     write_tushare_capabilities,
 )
+from technical_indicators import TechnicalIndicatorSettings, calculate_technical_indicators
 from tushare_gateway import request_endpoint
 from tushare_sync import create_tushare_client
 
 
 DATE_FORMAT = "%Y%m%d"
 DEFAULT_PREVIEW_ROWS = 5
+DEFAULT_BENCHMARK = "000300.SH"
 MODE_WINDOWS_DAYS = {"long": 365 * 5, "medium": 183, "short": 31}
 MODE_LABELS = {
     "long": "长期价值投资（多年）",
@@ -48,6 +51,7 @@ FINANCIAL_FACTS_POLICY = (
 @dataclass(frozen=True)
 class RequestContext:
     symbol: str
+    benchmark: str
     start_date: str
     end_date: str
 
@@ -83,6 +87,38 @@ def _trade_date_params(context: RequestContext) -> dict[str, str]:
     return {"ts_code": context.symbol, "trade_date": context.end_date}
 
 
+def _benchmark_range_params(context: RequestContext) -> dict[str, str]:
+    return {
+        "ts_code": context.benchmark,
+        "start_date": context.start_date,
+        "end_date": context.end_date,
+    }
+
+
+def _market_trade_date_params(context: RequestContext) -> dict[str, str]:
+    return {"trade_date": context.end_date}
+
+
+def _calendar_params(context: RequestContext) -> dict[str, str]:
+    return {
+        "exchange": "SSE",
+        "start_date": context.start_date,
+        "end_date": context.end_date,
+    }
+
+
+def _industry_classification_params(_: RequestContext) -> dict[str, str]:
+    return {"src": "SW2021", "level": "L1"}
+
+
+def _benchmark_weight_params(context: RequestContext) -> dict[str, str]:
+    return {
+        "index_code": context.benchmark,
+        "start_date": context.start_date,
+        "end_date": context.end_date,
+    }
+
+
 MARKET_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 DAILY_BASIC_FIELDS = (
     "ts_code,trade_date,close,turnover_rate,volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,"
@@ -102,6 +138,24 @@ FORECAST_FIELDS = (
 )
 DISCLOSURE_DATE_FIELDS = "ts_code,ann_date,end_date,pre_date,actual_date,modify_date"
 STK_LIMIT_FIELDS = "ts_code,trade_date,pre_close,up_limit,down_limit"
+INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+INDEX_DAILY_BASIC_FIELDS = (
+    "ts_code,trade_date,total_mv,float_mv,total_share,float_share,free_share,turnover_rate,"
+    "turnover_rate_f,pe,pe_ttm,pb"
+)
+TRADE_CAL_FIELDS = "exchange,cal_date,is_open,pretrade_date"
+DAILY_INFO_FIELDS = (
+    "trade_date,ts_code,ts_name,com_count,total_share,float_share,total_mv,float_mv,amount,vol,"
+    "trans_count,pe,tr,exchange"
+)
+MARKET_MONEYFLOW_FIELDS = (
+    "trade_date,close_sh,pct_change_sh,close_sz,pct_change_sz,net_amount,net_amount_rate,"
+    "buy_elg_amount,buy_elg_amount_rate,buy_lg_amount,buy_lg_amount_rate,buy_md_amount,"
+    "buy_md_amount_rate,buy_sm_amount,buy_sm_amount_rate"
+)
+MARKET_MARGIN_FIELDS = "trade_date,exchange_id,rzye,rzmre,rzche,rqye,rqmcl,rzrqye,rqyl"
+INDEX_CLASSIFICATION_FIELDS = "index_code,industry_name,level,industry_code,is_pub,parent_code,src"
+INDEX_WEIGHT_FIELDS = "index_code,con_code,trade_date,weight"
 
 
 MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
@@ -121,6 +175,27 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             fields=ADJ_FACTOR_FIELDS,
         ),
         DatasetSpec(
+            key="benchmark_price",
+            endpoint="index_daily",
+            purpose="以指定宽基或行业指数建立长期相对收益、成交和波动基准。",
+            params_builder=_benchmark_range_params,
+            fields=INDEX_DAILY_FIELDS,
+        ),
+        DatasetSpec(
+            key="benchmark_valuation",
+            endpoint="index_dailybasic",
+            purpose="观察基准指数的估值、换手和流通市值，避免孤立解读个股估值。",
+            params_builder=_benchmark_range_params,
+            fields=INDEX_DAILY_BASIC_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_calendar",
+            endpoint="trade_cal",
+            purpose="记录交易日与前一交易日，区分非交易日、停牌和真实数据缺口。",
+            params_builder=_calendar_params,
+            fields=TRADE_CAL_FIELDS,
+        ),
+        DatasetSpec(
             key="valuation_liquidity",
             endpoint="daily_basic",
             purpose="获取 PE、PB、PS、股息率、市值、换手和流通股本的历史观察。",
@@ -133,6 +208,22 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             purpose="获取名称、行业、市场和上市日期，界定比较范围。",
             params_builder=_symbol_params,
             fields=STOCK_BASIC_FIELDS,
+        ),
+        DatasetSpec(
+            key="industry_taxonomy",
+            endpoint="index_classify",
+            purpose="获取申万一级行业定义，支持行业口径一致的横向比较。",
+            params_builder=_industry_classification_params,
+            fields=INDEX_CLASSIFICATION_FIELDS,
+            optional=True,
+        ),
+        DatasetSpec(
+            key="benchmark_weights",
+            endpoint="index_weight",
+            purpose="获取指定基准历史权重，判断相对表现是否主要来自指数权重与行业暴露。",
+            params_builder=_benchmark_weight_params,
+            fields=INDEX_WEIGHT_FIELDS,
+            optional=True,
         ),
         DatasetSpec(
             key="dividend_history",
@@ -184,6 +275,27 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             fields=ADJ_FACTOR_FIELDS,
         ),
         DatasetSpec(
+            key="benchmark_price",
+            endpoint="index_daily",
+            purpose="以指定基准分离个股催化与市场整体价格变化。",
+            params_builder=_benchmark_range_params,
+            fields=INDEX_DAILY_FIELDS,
+        ),
+        DatasetSpec(
+            key="benchmark_valuation",
+            endpoint="index_dailybasic",
+            purpose="比较个股与市场基准的估值、换手和流通市值变化。",
+            params_builder=_benchmark_range_params,
+            fields=INDEX_DAILY_BASIC_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_calendar",
+            endpoint="trade_cal",
+            purpose="固定交易日口径，避免把非交易日或停牌误读为数据缺口。",
+            params_builder=_calendar_params,
+            fields=TRADE_CAL_FIELDS,
+        ),
+        DatasetSpec(
             key="valuation_liquidity",
             endpoint="daily_basic",
             purpose="观察估值、换手、市值和流动性是否已反映预期。",
@@ -196,6 +308,27 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             purpose="观察不同单量资金流的变化；资金流只解释拥挤和定价，不证明基本面。",
             params_builder=_range_params,
             fields=MONEYFLOW_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_breadth",
+            endpoint="daily_info",
+            purpose="观察交易所级市值、成交和估值背景，判断个股变化是否发生在普遍风险偏好切换中。",
+            params_builder=_market_trade_date_params,
+            fields=DAILY_INFO_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_money_flow",
+            endpoint="moneyflow_mkt_dc",
+            purpose="观察全市场分单资金净流入，作为个股资金流的背景而非基本面证据。",
+            params_builder=_market_trade_date_params,
+            fields=MARKET_MONEYFLOW_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_margin",
+            endpoint="margin",
+            purpose="观察交易所级融资融券余额和增减，识别市场杠杆与流动性状态。",
+            params_builder=_market_trade_date_params,
+            fields=MARKET_MARGIN_FIELDS,
         ),
         DatasetSpec(
             key="earnings_forecast",
@@ -268,6 +401,20 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             fields=ADJ_FACTOR_FIELDS,
         ),
         DatasetSpec(
+            key="benchmark_price",
+            endpoint="index_daily",
+            purpose="以指定基准判断短期相对强弱，避免把市场普涨或普跌误读为个股信号。",
+            params_builder=_benchmark_range_params,
+            fields=INDEX_DAILY_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_calendar",
+            endpoint="trade_cal",
+            purpose="明确可交易日期和前一交易日，纳入停牌与事件窗口约束。",
+            params_builder=_calendar_params,
+            fields=TRADE_CAL_FIELDS,
+        ),
+        DatasetSpec(
             key="valuation_liquidity",
             endpoint="daily_basic",
             purpose="观察换手、量比、市值和估值变化，评估可执行性与拥挤。",
@@ -280,6 +427,27 @@ MODE_DATASETS: dict[str, tuple[DatasetSpec, ...]] = {
             purpose="观察资金流和成交结构的短期变化；它不构成单独的交易依据。",
             params_builder=_range_params,
             fields=MONEYFLOW_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_breadth",
+            endpoint="daily_info",
+            purpose="观察交易所级成交、估值和市场广度，避免只用个股盘口判断风险偏好。",
+            params_builder=_market_trade_date_params,
+            fields=DAILY_INFO_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_money_flow",
+            endpoint="moneyflow_mkt_dc",
+            purpose="观察全市场分单资金净流入，识别短线资金环境是否支持执行。",
+            params_builder=_market_trade_date_params,
+            fields=MARKET_MONEYFLOW_FIELDS,
+        ),
+        DatasetSpec(
+            key="market_margin",
+            endpoint="margin",
+            purpose="观察交易所级融资融券杠杆，识别拥挤与流动性恶化风险。",
+            params_builder=_market_trade_date_params,
+            fields=MARKET_MARGIN_FIELDS,
         ),
         DatasetSpec(
             key="price_limit",
@@ -361,6 +529,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
 def _default_start_date(mode: str, end_date: str) -> str:
     parsed_end_date = datetime.strptime(end_date, DATE_FORMAT)
     return (parsed_end_date - timedelta(days=MODE_WINDOWS_DAYS[mode])).strftime(DATE_FORMAT)
@@ -377,7 +552,16 @@ def _context_from_args(args: argparse.Namespace, *, allow_default_end_date: bool
     start_date = args.start_date or _default_start_date(args.mode, end_date)
     if start_date > end_date:
         raise ValueError("start_date must be earlier than or equal to end_date")
-    return RequestContext(symbol=args.symbol, start_date=start_date, end_date=end_date), args.start_date is None, defaulted_end_date
+    return (
+        RequestContext(
+            symbol=args.symbol,
+            benchmark=args.benchmark,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        args.start_date is None,
+        defaulted_end_date,
+    )
 
 
 def _request_for_spec(spec: DatasetSpec, context: RequestContext) -> dict[str, Any]:
@@ -423,6 +607,7 @@ def _plan_payload(
         "mode": mode,
         "mode_label": MODE_LABELS[mode],
         "symbol": context.symbol,
+        "benchmark": context.benchmark,
         "date_range": {
             "start_date": context.start_date,
             "end_date": context.end_date,
@@ -538,7 +723,15 @@ def _run_fetch(args: argparse.Namespace) -> int:
             continue
 
         status = "empty" if frame.empty else "available"
-        cached_rows = write_research_observations(_dataset_name(args.mode, spec), frame, db_path=args.db_path) if args.cache else 0
+        cached_rows = 0
+        normalized_rows = 0
+        if args.cache:
+            cached_rows, normalized_rows = persist_tushare_collection(
+                _dataset_name(args.mode, spec),
+                spec.endpoint,
+                frame,
+                db_path=args.db_path,
+            )
         output = _write_csv(frame, args.output_dir, args.mode, spec, context) if args.output_dir else None
         capabilities.append(_capability_record(spec, status, rows=len(frame)))
         results.append(
@@ -549,6 +742,7 @@ def _run_fetch(args: argparse.Namespace) -> int:
                 "rows": len(frame),
                 "columns": list(frame.columns),
                 "cached_rows": cached_rows,
+                "normalized_rows": normalized_rows,
                 "output": str(output) if output else None,
                 "permission_sensitive": spec.permission_sensitive,
                 "source_boundary": spec.source_boundary,
@@ -564,6 +758,7 @@ def _run_fetch(args: argparse.Namespace) -> int:
         "mode": args.mode,
         "mode_label": MODE_LABELS[args.mode],
         "symbol": context.symbol,
+        "benchmark": context.benchmark,
         "date_range": {"start_date": context.start_date, "end_date": context.end_date},
         "financial_facts_policy": FINANCIAL_FACTS_POLICY,
         "cache": args.cache,
@@ -575,9 +770,92 @@ def _run_fetch(args: argparse.Namespace) -> int:
     return 1 if failures and args.strict else 0
 
 
+def _indicator_settings_from_args(args: argparse.Namespace) -> TechnicalIndicatorSettings:
+    settings = TechnicalIndicatorSettings(
+        macd_fast=args.macd_fast,
+        macd_slow=args.macd_slow,
+        macd_signal=args.macd_signal,
+        rsi_window=args.rsi_window,
+        bollinger_window=args.bollinger_window,
+        bollinger_std=args.bollinger_std,
+        sma_short=args.sma_short,
+        sma_long=args.sma_long,
+        volume_window=args.volume_window,
+    )
+    settings.validate()
+    return settings
+
+
+def _indicator_latest_record(indicators: pd.DataFrame) -> dict[str, Any]:
+    history = indicators.reset_index()
+    history["trade_date"] = pd.to_datetime(history["trade_date"]).dt.strftime("%Y-%m-%d")
+    return json.loads(history.tail(1).to_json(orient="records", force_ascii=False))[0]
+
+
+def _write_indicator_history(indicators: pd.DataFrame, output: Path, symbol: str) -> Path:
+    if output.suffix.lower() != ".csv":
+        raise ValueError("--output must use a .csv extension")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    history = indicators.reset_index()
+    history.insert(1, "ts_code", symbol)
+    history.to_csv(output, index=False)
+    return output
+
+
+def _run_indicators(args: argparse.Namespace) -> int:
+    settings = _indicator_settings_from_args(args)
+    prices, volumes = load_daily_matrices(
+        db_path=args.db_path,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        symbols=[args.symbol],
+    )
+    if args.symbol not in prices:
+        raise ValueError(f"no forward-adjusted daily price data stored for {args.symbol}")
+
+    close_prices = prices[args.symbol].dropna()
+    if close_prices.empty:
+        raise ValueError(f"no usable forward-adjusted daily price data stored for {args.symbol}")
+    volume_series = volumes[args.symbol].reindex(close_prices.index) if args.symbol in volumes else None
+    indicators = calculate_technical_indicators(close_prices, volume_series, settings=settings)
+    latest_record = _indicator_latest_record(indicators)
+    unavailable_indicators = [
+        field
+        for field, value in latest_record.items()
+        if field not in {"trade_date", "close_qfq", "volume"} and value is None
+    ]
+    output = _write_indicator_history(indicators, args.output, args.symbol) if args.output else None
+    payload = {
+        "operation": "indicators",
+        "symbol": args.symbol,
+        "price_basis": "forward-adjusted close (close_qfq) from local SQLite",
+        "requested_date_range": {"start_date": args.start_date, "end_date": args.end_date},
+        "latest_trade_date": latest_record["trade_date"],
+        "observations": len(indicators),
+        "required_observations_for_standard_set": settings.warmup_observations,
+        "sufficient_history_for_standard_set": len(indicators) >= settings.warmup_observations,
+        "settings": asdict(settings),
+        "latest": latest_record,
+        "unavailable_latest_indicators": unavailable_indicators,
+        "output": str(output) if output else None,
+        "interpretation_boundary": (
+            "Indicators are reproducible market observations, not automatic buy/sell signals or personalized position advice. "
+            "Use them with price, liquidity, event risk, and the main Skill's decision discipline."
+        ),
+    }
+    print(json.dumps(payload, ensure_ascii=False, default=str, indent=2))
+    return 0
+
+
 def _add_common_arguments(parser: argparse.ArgumentParser, *, require_end_date: bool) -> None:
     parser.add_argument("mode", type=_mode, help="long, medium, or short")
     parser.add_argument("--symbol", type=_symbol, required=True, help="TuShare ts_code, such as 000001.SZ")
+    parser.add_argument(
+        "--benchmark",
+        type=_symbol,
+        default=DEFAULT_BENCHMARK,
+        help=f"Index ts_code used for market comparison (default: {DEFAULT_BENCHMARK})",
+    )
     parser.add_argument("--start-date", type=_date, help="YYYYMMDD; defaults to a mode-specific lookback window")
     parser.add_argument("--end-date", type=_date, required=require_end_date, help="YYYYMMDD research as_of date")
     parser.add_argument(
@@ -600,11 +878,35 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser = subparsers.add_parser("fetch", help="Fetch one mode-specific data plan")
     _add_common_arguments(fetch_parser, require_end_date=True)
     fetch_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
-    fetch_parser.add_argument("--cache", action="store_true", help="Store raw endpoint rows and capability status in SQLite")
+    fetch_parser.add_argument(
+        "--cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Store endpoint rows, capabilities, and eligible core-table rows in SQLite (default)",
+    )
     fetch_parser.add_argument("--output-dir", type=Path, help="Optional directory for one CSV per dataset")
     fetch_parser.add_argument("--dry-run", action="store_true", help="Print requests without reading a token or calling TuShare")
     fetch_parser.add_argument("--strict", action="store_true", help="Return a nonzero exit status when any endpoint is unavailable")
     fetch_parser.add_argument("--preview-rows", type=_positive_int, default=DEFAULT_PREVIEW_ROWS)
+
+    indicators_parser = subparsers.add_parser(
+        "indicators",
+        help="Calculate reproducible technical indicators from locally stored forward-adjusted daily data",
+    )
+    indicators_parser.add_argument("--symbol", type=_symbol, required=True, help="TuShare ts_code, such as 000001.SZ")
+    indicators_parser.add_argument("--start-date", type=_date, help="Optional earliest stored trade date to include")
+    indicators_parser.add_argument("--end-date", type=_date, required=True, help="YYYYMMDD research as_of date")
+    indicators_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
+    indicators_parser.add_argument("--output", type=Path, help="Optional CSV path for full indicator history")
+    indicators_parser.add_argument("--macd-fast", type=_positive_int, default=12)
+    indicators_parser.add_argument("--macd-slow", type=_positive_int, default=26)
+    indicators_parser.add_argument("--macd-signal", type=_positive_int, default=9)
+    indicators_parser.add_argument("--rsi-window", type=_positive_int, default=14)
+    indicators_parser.add_argument("--bollinger-window", type=_positive_int, default=20)
+    indicators_parser.add_argument("--bollinger-std", type=_positive_float, default=2.0)
+    indicators_parser.add_argument("--sma-short", type=_positive_int, default=20)
+    indicators_parser.add_argument("--sma-long", type=_positive_int, default=60)
+    indicators_parser.add_argument("--volume-window", type=_positive_int, default=20)
     return parser
 
 
@@ -614,7 +916,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "plan":
             return _run_plan(args)
-        return _run_fetch(args)
+        if args.command == "fetch":
+            return _run_fetch(args)
+        return _run_indicators(args)
     except (OSError, RuntimeError, ValueError) as exc:
         parser.error(str(exc))
     return 2

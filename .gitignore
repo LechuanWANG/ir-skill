@@ -1,14 +1,19 @@
 .DS_Store
 .codebase-memory/
+.playwright-mcp/
+IR Skill-old/
 __pycache__/
 *.py[cod]
 .env
+web/node_modules/
+web/dist/
 
 # Local research data, generated outputs, and editor state.
 .obsidian/
 data/
 docs/investment-llm-wiki/
 output/
+report/
 reports/
 tmp/
 *.sqlite

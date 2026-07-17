@@ -15,13 +15,22 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 
-DEFAULT_DB_PATH = Path("data/investment_research.sqlite")
+DEFAULT_DB_PATH = Path("data/research-library/database/investment_research.sqlite")
 DAILY_TABLE = "a_share_daily"
 DAILY_BASIC_TABLE = "a_share_daily_basic"
 FINA_INDICATOR_TABLE = "a_share_fina_indicator"
 STOCK_BASIC_TABLE = "a_share_stock_basic"
 RESEARCH_OBSERVATION_TABLE = "tushare_research_observation"
 TUSHARE_CAPABILITY_TABLE = "tushare_capability"
+TRADING_CALENDAR_TABLE = "market_trading_calendar"
+INDEX_DAILY_TABLE = "market_index_daily"
+INDEX_DAILY_BASIC_TABLE = "market_index_daily_basic"
+INDUSTRY_CLASSIFICATION_TABLE = "market_industry_classification"
+INDEX_MEMBER_TABLE = "market_index_member"
+INDEX_WEIGHT_TABLE = "market_index_weight"
+MARKET_DAILY_INFO_TABLE = "market_daily_info"
+MARKET_MONEYFLOW_TABLE = "market_moneyflow"
+MARKET_MARGIN_TABLE = "market_margin"
 
 RESEARCH_IDENTITY_FIELDS = (
     "ts_code",
@@ -79,6 +88,71 @@ FINA_INDICATOR_NUMERIC_FIELDS = [
 ]
 
 STOCK_BASIC_TEXT_FIELDS = ["name", "industry", "market", "list_date"]
+
+INDEX_DAILY_NUMERIC_FIELDS = [
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "change",
+    "pct_chg",
+    "vol",
+    "amount",
+]
+
+INDEX_DAILY_BASIC_NUMERIC_FIELDS = [
+    "total_mv",
+    "float_mv",
+    "total_share",
+    "float_share",
+    "free_share",
+    "turnover_rate",
+    "turnover_rate_f",
+    "pe",
+    "pe_ttm",
+    "pb",
+]
+
+MARKET_DAILY_INFO_NUMERIC_FIELDS = [
+    "com_count",
+    "total_share",
+    "float_share",
+    "total_mv",
+    "float_mv",
+    "amount",
+    "vol",
+    "trans_count",
+    "pe",
+    "tr",
+]
+
+MARKET_MONEYFLOW_NUMERIC_FIELDS = [
+    "close_sh",
+    "pct_change_sh",
+    "close_sz",
+    "pct_change_sz",
+    "net_amount",
+    "net_amount_rate",
+    "buy_elg_amount",
+    "buy_elg_amount_rate",
+    "buy_lg_amount",
+    "buy_lg_amount_rate",
+    "buy_md_amount",
+    "buy_md_amount_rate",
+    "buy_sm_amount",
+    "buy_sm_amount_rate",
+]
+
+MARKET_MARGIN_NUMERIC_FIELDS = [
+    "rzye",
+    "rzmre",
+    "rzche",
+    "rqye",
+    "rqmcl",
+    "rzrqye",
+    "rqyl",
+]
 
 
 def normalize_trade_date(value: object) -> str:
@@ -223,6 +297,179 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             source TEXT NOT NULL,
             retrieved_at TEXT NOT NULL
         )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TRADING_CALENDAR_TABLE} (
+            exchange TEXT NOT NULL,
+            cal_date TEXT NOT NULL,
+            is_open INTEGER,
+            pretrade_date TEXT,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (exchange, cal_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INDEX_DAILY_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            pre_close REAL,
+            change REAL,
+            pct_chg REAL,
+            vol REAL,
+            amount REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INDEX_DAILY_BASIC_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            total_mv REAL,
+            float_mv REAL,
+            total_share REAL,
+            float_share REAL,
+            free_share REAL,
+            turnover_rate REAL,
+            turnover_rate_f REAL,
+            pe REAL,
+            pe_ttm REAL,
+            pb REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INDUSTRY_CLASSIFICATION_TABLE} (
+            src TEXT NOT NULL,
+            index_code TEXT NOT NULL,
+            industry_code TEXT,
+            industry_name TEXT,
+            level TEXT,
+            is_pub TEXT,
+            parent_code TEXT,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (src, index_code)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INDEX_MEMBER_TABLE} (
+            index_code TEXT NOT NULL,
+            con_code TEXT NOT NULL,
+            in_date TEXT NOT NULL,
+            out_date TEXT,
+            is_new TEXT,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (index_code, con_code, in_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INDEX_WEIGHT_TABLE} (
+            index_code TEXT NOT NULL,
+            con_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            weight REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (index_code, con_code, trade_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {MARKET_DAILY_INFO_TABLE} (
+            trade_date TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            ts_name TEXT,
+            exchange TEXT,
+            com_count REAL,
+            total_share REAL,
+            float_share REAL,
+            total_mv REAL,
+            float_mv REAL,
+            amount REAL,
+            vol REAL,
+            trans_count REAL,
+            pe REAL,
+            tr REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, ts_code)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {MARKET_MONEYFLOW_TABLE} (
+            trade_date TEXT PRIMARY KEY,
+            close_sh REAL,
+            pct_change_sh REAL,
+            close_sz REAL,
+            pct_change_sz REAL,
+            net_amount REAL,
+            net_amount_rate REAL,
+            buy_elg_amount REAL,
+            buy_elg_amount_rate REAL,
+            buy_lg_amount REAL,
+            buy_lg_amount_rate REAL,
+            buy_md_amount REAL,
+            buy_md_amount_rate REAL,
+            buy_sm_amount REAL,
+            buy_sm_amount_rate REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {MARKET_MARGIN_TABLE} (
+            trade_date TEXT NOT NULL,
+            exchange_id TEXT NOT NULL,
+            rzye REAL,
+            rzmre REAL,
+            rzche REAL,
+            rqye REAL,
+            rqmcl REAL,
+            rzrqye REAL,
+            rqyl REAL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, exchange_id)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{INDEX_MEMBER_TABLE}_con_code
+        ON {INDEX_MEMBER_TABLE} (con_code, in_date, out_date)
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{MARKET_DAILY_INFO_TABLE}_exchange_date
+        ON {MARKET_DAILY_INFO_TABLE} (exchange, trade_date)
         """
     )
     connection.execute(
@@ -792,7 +1039,16 @@ def write_daily_basic(
         )
 
     columns = ["trade_date", "ts_code", *DAILY_BASIC_NUMERIC_FIELDS, "source", "retrieved_at"]
-    assignments = ", ".join(f"{column} = excluded.{column}" for column in [*DAILY_BASIC_NUMERIC_FIELDS, "source", "retrieved_at"])
+    assignments = ", ".join(
+        [
+            *[
+                f"{column} = COALESCE(excluded.{column}, {column})"
+                for column in DAILY_BASIC_NUMERIC_FIELDS
+            ],
+            "source = excluded.source",
+            "retrieved_at = excluded.retrieved_at",
+        ]
+    )
     placeholders = ", ".join("?" for _ in columns)
     db_path = ensure_database(db_path)
     with closing(sqlite3.connect(db_path)) as connection:
@@ -839,7 +1095,14 @@ def write_fina_indicator(
 
     columns = ["end_date", "ts_code", "ann_date", *FINA_INDICATOR_NUMERIC_FIELDS, "source", "retrieved_at"]
     assignments = ", ".join(
-        f"{column} = excluded.{column}" for column in ["ann_date", *FINA_INDICATOR_NUMERIC_FIELDS, "source", "retrieved_at"]
+        [
+            *[
+                f"{column} = COALESCE(excluded.{column}, {column})"
+                for column in ["ann_date", *FINA_INDICATOR_NUMERIC_FIELDS]
+            ],
+            "source = excluded.source",
+            "retrieved_at = excluded.retrieved_at",
+        ]
     )
     placeholders = ", ".join("?" for _ in columns)
     db_path = ensure_database(db_path)
@@ -906,6 +1169,362 @@ def write_stock_basic(
         )
         connection.commit()
     return len(records)
+
+
+def _write_normalized_frame(
+    frame: pd.DataFrame,
+    *,
+    table: str,
+    columns: Sequence[str],
+    key_columns: Sequence[str],
+    date_columns: Sequence[str] = (),
+    numeric_columns: Sequence[str] = (),
+    integer_columns: Sequence[str] = (),
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    if frame.empty:
+        ensure_database(db_path)
+        return 0
+
+    date_fields = set(date_columns)
+    numeric_fields = set(numeric_columns)
+    integer_fields = set(integer_columns)
+    timestamp = _timestamp(retrieved_at)
+    records = []
+    for _, row in frame.iterrows():
+        values = []
+        for column in columns:
+            value = row.get(column)
+            if column in date_fields:
+                value = _normalize_optional_date(value)
+            elif column in numeric_fields:
+                value = _float_or_none(value)
+            elif column in integer_fields:
+                value = None if pd.isna(value) else int(value)
+            else:
+                value = _text_or_none(value)
+            values.append(value)
+        records.append((*values, source, timestamp))
+
+    all_columns = [*columns, "source", "retrieved_at"]
+    assignments = ", ".join(
+        [
+            *[
+                f"{column} = COALESCE(excluded.{column}, {column})"
+                for column in columns
+                if column not in key_columns
+            ],
+            "source = excluded.source",
+            "retrieved_at = excluded.retrieved_at",
+        ]
+    )
+    placeholders = ", ".join("?" for _ in all_columns)
+    db_path = ensure_database(db_path)
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        connection.executemany(
+            f"""
+            INSERT INTO {table} ({", ".join(all_columns)})
+            VALUES ({placeholders})
+            ON CONFLICT({", ".join(key_columns)}) DO UPDATE SET
+                {assignments}
+            """,
+            records,
+        )
+        connection.commit()
+    return len(records)
+
+
+def write_trading_calendar(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=TRADING_CALENDAR_TABLE,
+        columns=["exchange", "cal_date", "is_open", "pretrade_date"],
+        key_columns=["exchange", "cal_date"],
+        date_columns=["cal_date", "pretrade_date"],
+        integer_columns=["is_open"],
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_index_daily(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=INDEX_DAILY_TABLE,
+        columns=["ts_code", "trade_date", *INDEX_DAILY_NUMERIC_FIELDS],
+        key_columns=["ts_code", "trade_date"],
+        date_columns=["trade_date"],
+        numeric_columns=INDEX_DAILY_NUMERIC_FIELDS,
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_index_daily_basic(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=INDEX_DAILY_BASIC_TABLE,
+        columns=["ts_code", "trade_date", *INDEX_DAILY_BASIC_NUMERIC_FIELDS],
+        key_columns=["ts_code", "trade_date"],
+        date_columns=["trade_date"],
+        numeric_columns=INDEX_DAILY_BASIC_NUMERIC_FIELDS,
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_industry_classification(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=INDUSTRY_CLASSIFICATION_TABLE,
+        columns=["src", "index_code", "industry_code", "industry_name", "level", "is_pub", "parent_code"],
+        key_columns=["src", "index_code"],
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_index_members(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=INDEX_MEMBER_TABLE,
+        columns=["index_code", "con_code", "in_date", "out_date", "is_new"],
+        key_columns=["index_code", "con_code", "in_date"],
+        date_columns=["in_date", "out_date"],
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_index_weights(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=INDEX_WEIGHT_TABLE,
+        columns=["index_code", "con_code", "trade_date", "weight"],
+        key_columns=["index_code", "con_code", "trade_date"],
+        date_columns=["trade_date"],
+        numeric_columns=["weight"],
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_market_daily_info(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=MARKET_DAILY_INFO_TABLE,
+        columns=["trade_date", "ts_code", "ts_name", "exchange", *MARKET_DAILY_INFO_NUMERIC_FIELDS],
+        key_columns=["trade_date", "ts_code"],
+        date_columns=["trade_date"],
+        numeric_columns=MARKET_DAILY_INFO_NUMERIC_FIELDS,
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_market_moneyflow(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=MARKET_MONEYFLOW_TABLE,
+        columns=["trade_date", *MARKET_MONEYFLOW_NUMERIC_FIELDS],
+        key_columns=["trade_date"],
+        date_columns=["trade_date"],
+        numeric_columns=MARKET_MONEYFLOW_NUMERIC_FIELDS,
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def write_market_margin(
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    return _write_normalized_frame(
+        frame,
+        table=MARKET_MARGIN_TABLE,
+        columns=["trade_date", "exchange_id", *MARKET_MARGIN_NUMERIC_FIELDS],
+        key_columns=["trade_date", "exchange_id"],
+        date_columns=["trade_date"],
+        numeric_columns=MARKET_MARGIN_NUMERIC_FIELDS,
+        db_path=db_path,
+        source=source,
+        retrieved_at=retrieved_at,
+    )
+
+
+def persist_tushare_collection(
+    dataset: str,
+    endpoint: str,
+    frame: pd.DataFrame,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> tuple[int, int]:
+    """Persist every fetched response and materialize safe core-table rows.
+
+    Arbitrary endpoint responses always enter the append-aware research cache.
+    Known row-oriented core datasets are additionally upserted into their
+    normalized SQLite tables when the response includes their identifying
+    columns. Partial observations preserve already stored normalized fields.
+    """
+    timestamp = _timestamp(retrieved_at)
+    observation_rows = write_research_observations(
+        dataset,
+        frame,
+        db_path=db_path,
+        source=source,
+        retrieved_at=timestamp,
+    )
+    columns = set(frame.columns)
+    normalized_rows = 0
+    if {"ts_code", "trade_date"}.issubset(columns) and endpoint == "daily_basic":
+        normalized_rows = write_daily_basic(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"ts_code", "end_date"}.issubset(columns) and endpoint == "fina_indicator":
+        normalized_rows = write_fina_indicator(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"ts_code", "name", "industry", "market", "list_date"}.issubset(columns) and endpoint == "stock_basic":
+        normalized_rows = write_stock_basic(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"exchange", "cal_date"}.issubset(columns) and endpoint == "trade_cal":
+        normalized_rows = write_trading_calendar(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"ts_code", "trade_date"}.issubset(columns) and endpoint == "index_daily":
+        normalized_rows = write_index_daily(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"ts_code", "trade_date"}.issubset(columns) and endpoint == "index_dailybasic":
+        normalized_rows = write_index_daily_basic(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"src", "index_code"}.issubset(columns) and endpoint == "index_classify":
+        normalized_rows = write_industry_classification(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"index_code", "con_code", "in_date"}.issubset(columns) and endpoint == "index_member":
+        normalized_rows = write_index_members(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"index_code", "con_code", "trade_date"}.issubset(columns) and endpoint == "index_weight":
+        normalized_rows = write_index_weights(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"trade_date", "ts_code"}.issubset(columns) and endpoint == "daily_info":
+        normalized_rows = write_market_daily_info(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"trade_date", "net_amount"}.issubset(columns) and endpoint == "moneyflow_mkt_dc":
+        normalized_rows = write_market_moneyflow(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    elif {"trade_date", "exchange_id"}.issubset(columns) and endpoint == "margin":
+        normalized_rows = write_market_margin(
+            frame,
+            db_path=db_path,
+            source=source,
+            retrieved_at=timestamp,
+        )
+    return observation_rows, normalized_rows
 
 
 def load_daily_matrices(
