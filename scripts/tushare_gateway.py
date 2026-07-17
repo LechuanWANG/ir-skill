@@ -18,7 +18,7 @@ import pandas as pd
 from market_data_store import (
     DEFAULT_DB_PATH,
     load_research_observations,
-    write_research_observations,
+    persist_tushare_collection,
     write_tushare_capabilities,
 )
 from tushare_sync import create_tushare_client
@@ -157,8 +157,14 @@ def _run_fetch(args: argparse.Namespace) -> int:
 
     frame = request_endpoint(create_tushare_client(), args.endpoint, params)
     cached_rows = 0
+    normalized_rows = 0
     if args.cache:
-        cached_rows = write_research_observations(dataset, frame, db_path=args.db_path)
+        cached_rows, normalized_rows = persist_tushare_collection(
+            dataset,
+            args.endpoint,
+            frame,
+            db_path=args.db_path,
+        )
     output = _write_output(frame, args.output) if args.output is not None else None
     _print_json(
         {
@@ -167,6 +173,7 @@ def _run_fetch(args: argparse.Namespace) -> int:
             "rows": len(frame),
             "columns": list(frame.columns),
             "cached_rows": cached_rows,
+            "normalized_rows": normalized_rows,
             "output": str(output) if output is not None else None,
             "preview": _preview_records(frame, args.preview_rows),
         }
@@ -187,6 +194,7 @@ def _run_probe(args: argparse.Namespace) -> int:
         )
         return 0
 
+    frame: pd.DataFrame | None = None
     try:
         client = create_tushare_client()
     except RuntimeError as exc:
@@ -215,6 +223,8 @@ def _run_probe(args: argparse.Namespace) -> int:
             }
             exit_code = 0
 
+    cached_rows = 0
+    normalized_rows = 0
     if args.cache:
         cached_record = {
             key: value
@@ -224,6 +234,16 @@ def _run_probe(args: argparse.Namespace) -> int:
         if "error" in record:
             cached_record["error_type"] = "endpoint_request_failed"
         write_tushare_capabilities([cached_record], db_path=args.db_path)
+        if frame is not None:
+            cached_rows, normalized_rows = persist_tushare_collection(
+                args.endpoint,
+                args.endpoint,
+                frame,
+                db_path=args.db_path,
+            )
+    if frame is not None:
+        record["cached_rows"] = cached_rows
+        record["normalized_rows"] = normalized_rows
     _print_json(record)
     return exit_code
 
@@ -260,7 +280,12 @@ def _add_request_arguments(parser: argparse.ArgumentParser) -> None:
     params_group.add_argument("--params-file", type=Path, help="Path to a JSON object of endpoint parameters")
     parser.add_argument("--fields", help="Optional comma-separated TuShare fields")
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--cache", action="store_true", help="Persist response metadata and rows to SQLite")
+    parser.add_argument(
+        "--cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Persist response metadata and rows to SQLite (default; use --no-cache only for non-research probes)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate and print the request without calling TuShare")
 
 
@@ -279,7 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
     probe_parser = subparsers.add_parser("probe", help="Probe one endpoint with a minimal explicit request")
     _add_request_arguments(probe_parser)
 
-    cache_parser = subparsers.add_parser("cache", help="Read rows previously stored by fetch --cache")
+    cache_parser = subparsers.add_parser("cache", help="Read rows automatically stored by fetch")
     cache_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
     cache_parser.add_argument("--dataset")
     cache_parser.add_argument("--symbols", nargs="+")

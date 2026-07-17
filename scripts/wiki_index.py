@@ -14,7 +14,6 @@ from urllib.parse import urlsplit
 
 CORE_FILES = {"index.md", "log.md", "schema.md"}
 DOMAINS = ("company", "industry", "market", "macro")
-DATE_DIRECTORY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 WIKI_LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+['\"][^)]*)?\)")
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -104,10 +103,6 @@ def resolve_markdown_link(source: Path, link: str) -> str | None:
     return candidate
 
 
-def is_raw_source_path(path: str) -> bool:
-    return PurePosixPath(path).parts[:1] == ("raw",)
-
-
 def structure_errors(wiki_dir: Path) -> list[str]:
     errors: list[str] = []
     pages_root = wiki_dir / "wiki"
@@ -119,41 +114,6 @@ def structure_errors(wiki_dir: Path) -> list[str]:
                 errors.append(f"unexpected wiki directory: {path.relative_to(wiki_dir).as_posix()}")
 
     for domain in DOMAINS:
-        sources_dir = wiki_dir / "raw" / domain
-        if not sources_dir.is_dir():
-            errors.append(f"missing raw/{domain}/")
-        else:
-            for subject_dir in sorted(sources_dir.iterdir()):
-                if subject_dir.name.startswith("."):
-                    continue
-                if not subject_dir.is_dir():
-                    errors.append(
-                        f"flat raw file: {subject_dir.relative_to(wiki_dir).as_posix()}"
-                    )
-                    continue
-                for date_dir in sorted(subject_dir.iterdir()):
-                    if date_dir.name.startswith("."):
-                        continue
-                    if not date_dir.is_dir():
-                        errors.append(
-                            "raw subject requires date directory: "
-                            f"{date_dir.relative_to(wiki_dir).as_posix()}"
-                        )
-                        continue
-                    if not DATE_DIRECTORY_RE.fullmatch(date_dir.name):
-                        errors.append(
-                            "invalid raw date directory: "
-                            f"{date_dir.relative_to(wiki_dir).as_posix()}"
-                        )
-                    for item in sorted(date_dir.iterdir()):
-                        if item.name.startswith("."):
-                            continue
-                        if item.is_dir():
-                            errors.append(
-                                "nested raw directory: "
-                                f"{item.relative_to(wiki_dir).as_posix()}"
-                            )
-
         pages_dir = pages_root / domain
         if not pages_dir.is_dir():
             errors.append(f"missing wiki/{domain}/")
@@ -181,8 +141,6 @@ def structure_errors(wiki_dir: Path) -> list[str]:
                     )
 
     for legacy_dir in ("companies", "industries"):
-        if (wiki_dir / "raw" / legacy_dir).exists():
-            errors.append(f"legacy raw/{legacy_dir}/")
         if (wiki_dir / "wiki" / legacy_dir).exists():
             errors.append(f"legacy wiki/{legacy_dir}/")
     for legacy_dir in ("entities", "concepts", "sources"):
@@ -227,7 +185,7 @@ def lint_wiki(wiki_dir: Path) -> dict[str, list[str]]:
         source = path.relative_to(wiki_dir)
         for link in extract_markdown_links(text):
             candidate = resolve_markdown_link(source, link)
-            if candidate is None or is_raw_source_path(candidate):
+            if candidate is None:
                 continue
             if candidate not in document_names:
                 broken_links.append(f"{relative} -> {link}")
