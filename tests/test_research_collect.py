@@ -89,6 +89,17 @@ class ResearchCollectTests(unittest.TestCase):
         failure = json.loads(Path(result["failure_path"]).read_text(encoding="utf-8"))
         self.assertIn("缺少 %PDF-", failure["reason"])
 
+    def test_terminal_task_rejects_new_raw_source(self) -> None:
+        library.complete_research_task("collection-test")
+        response = FakeResponse(b"%PDF-1.7\nlate report", url="https://exchange.example/late-report.pdf", content_type="application/pdf")
+
+        with self.assertRaisesRegex(ValueError, "已处于终态 completed"):
+            collector.collect_source(task_id="collection-test", url="https://exchange.example/late-report.pdf", opener=lambda *_args, **_kwargs: response)
+
+        task_root = self.library_root / "staging" / "collection-test"
+        self.assertFalse((task_root / "raw").exists())
+        self.assertFalse((task_root / "working").exists())
+
     def test_discovers_cninfo_original_reports_by_company_name_and_verifies_ticker(self) -> None:
         response = FakeResponse(
             json.dumps(
@@ -183,6 +194,25 @@ class ResearchCollectTests(unittest.TestCase):
         self.assertEqual(result["last_page"], "working/pdf-pages/report/page-1.png")
         self.assertEqual((task_root / result["first_page"]).read_bytes(), b"png")
         self.assertTrue(Path(collected["raw_path"]).is_file())
+
+    def test_terminal_task_rejects_new_pdf_review_pages(self) -> None:
+        response = FakeResponse(b"%PDF-1.7\nvalid report", url="https://exchange.example/report.pdf", content_type="application/pdf")
+        collector.collect_source(task_id="collection-test", url="https://exchange.example/report.pdf", opener=lambda *_args, **_kwargs: response)
+        task_root = self.library_root / "staging" / "collection-test"
+        (task_root / "archive-plan.json").write_text(
+            json.dumps(
+                {
+                    "documents": [],
+                    "discard_files": [{"source_file": "raw/report.pdf", "reason": "测试终态不可再生成审阅页"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        library.complete_research_task("collection-test")
+
+        with self.assertRaisesRegex(ValueError, "已处于终态 completed"):
+            collector.render_pdf_pages(task_id="collection-test", source_file="raw/report.pdf")
 
 
 if __name__ == "__main__":

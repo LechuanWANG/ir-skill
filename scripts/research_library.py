@@ -1226,6 +1226,10 @@ def complete_research_task(task_id: str) -> dict[str, Any]:
     raw_root = task_root / "raw"
     raw_sources = [path for path in raw_root.rglob("*") if path.is_file()] if raw_root.is_dir() else []
     archive = archive_staged_task(metadata["task_id"], apply=True) if raw_sources else None
+    remaining_raw_sources = [path for path in raw_root.rglob("*") if path.is_file()] if raw_root.is_dir() else []
+    if remaining_raw_sources:
+        remaining = ", ".join(sorted(str(path.relative_to(task_root)) for path in remaining_raw_sources))
+        raise RuntimeError(f"任务 {metadata['task_id']} 仍有未归档原始资料，不能完成：{remaining}")
     return {
         "task_state": finish_research_task(metadata["task_id"], status="completed"),
         "archive": archive,

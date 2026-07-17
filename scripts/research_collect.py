@@ -31,6 +31,16 @@ CNINFO_STATIC_BASE_URL = "https://static.cninfo.com.cn/"
 CNINFO_REFERER = "http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice"
 
 
+def require_writable_task(metadata: dict[str, Any], *, operation: str) -> None:
+    """Keep terminal task staging immutable after its final archive has run."""
+
+    if metadata["status"] in {"completed", "abandoned"}:
+        raise ValueError(
+            f"任务 {metadata['task_id']} 已处于终态 {metadata['status']}，不能再{operation}。"
+            "请新建一个研究任务，或在完成归档前继续使用 active/blocked 任务。"
+        )
+
+
 class VisibleTextExtractor(HTMLParser):
     """Keep visible text only; this is a review aid, not a fact extractor."""
 
@@ -342,6 +352,7 @@ def collect_source(
     if timeout_seconds <= 0 or max_bytes <= 0:
         raise ValueError("timeout_seconds 和 max_bytes 必须为正数")
     metadata = load_research_task(task_id)
+    require_writable_task(metadata, operation="采集原始资料")
     task_root = task_directory(metadata["task_id"])
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/pdf,text/html,application/xhtml+xml"})
     open_request = opener or urlopen
@@ -418,6 +429,7 @@ def render_pdf_pages(*, task_id: str, source_file: str, dpi: int = 144) -> dict[
     if dpi < 72 or dpi > 300:
         raise ValueError("dpi 必须在 72 到 300 之间")
     metadata = load_research_task(task_id)
+    require_writable_task(metadata, operation="写入 PDF 审阅页")
     task_root = task_directory(metadata["task_id"])
     source = raw_staging_path(task_root, source_file)
     if source.suffix.lower() != ".pdf" or not source.is_file() or not source.read_bytes()[:5] == PDF_MAGIC:

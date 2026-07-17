@@ -339,6 +339,19 @@ class ResearchTaskStateTests(unittest.TestCase):
         self.assertEqual(len(archived_pdfs), 1)
         self.assertEqual(archived_pdfs[0].read_bytes(), b"%PDF-1.7\noriginal disclosure")
 
+    def test_complete_refuses_unplanned_raw_sources_and_keeps_task_active(self) -> None:
+        library.init_research_task("unplanned-completion", title="未规划资料不能完成")
+        task_root = self.staging_root / "unplanned-completion"
+        raw_path = task_root / "raw" / "unplanned.pdf"
+        raw_path.parent.mkdir(parents=True)
+        raw_path.write_bytes(b"%PDF-1.7\nunplanned source")
+
+        with self.assertRaisesRegex(ValueError, "archive-plan.json 至少需要"):
+            library.complete_research_task("unplanned-completion")
+
+        self.assertEqual(library.load_research_task("unplanned-completion")["status"], "active")
+        self.assertTrue(raw_path.is_file())
+
     def test_archive_rejects_any_uncovered_raw_source(self) -> None:
         library.init_research_task("uncovered-source", title="遗漏来源")
         task_root = self.staging_root / "uncovered-source"
