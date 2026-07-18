@@ -29,6 +29,7 @@ HTML_PREFIXES = (b"<!doctype html", b"<html", b"<head", b"<body")
 CNINFO_QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_STATIC_BASE_URL = "https://static.cninfo.com.cn/"
 CNINFO_REFERER = "http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice"
+REPORT_TYPES = ("all", "annual", "q1", "q2", "q3")
 
 
 def require_writable_task(metadata: dict[str, Any], *, operation: str) -> None:
@@ -39,6 +40,19 @@ def require_writable_task(metadata: dict[str, Any], *, operation: str) -> None:
             f"任务 {metadata['task_id']} 已处于终态 {metadata['status']}，不能再{operation}。"
             "请新建一个研究任务，或在完成归档前继续使用 active/blocked 任务。"
         )
+
+
+def load_writable_task(task_id: str, *, operation: str) -> dict[str, Any]:
+    """Explain why completed tasks no longer have a staging directory."""
+
+    try:
+        metadata = load_research_task(task_id)
+    except FileNotFoundError as error:
+        raise ValueError(
+            f"任务 {task_id} 的暂存目录不存在，可能已完成归档并清理。请新建研究任务后再{operation}。"
+        ) from error
+    require_writable_task(metadata, operation=operation)
+    return metadata
 
 
 class VisibleTextExtractor(HTMLParser):
@@ -125,7 +139,17 @@ def failure_path(task_root: Path, url: str) -> Path:
     return task_root / "working" / "collection-failures" / f"{digest}.json"
 
 
-def record_failure(task_root: Path, *, url: str, reason: str, status_code: int | None = None, response_type: str | None = None, final_url: str | None = None) -> Path:
+def record_failure(
+    task_root: Path,
+    *,
+    url: str,
+    reason: str,
+    failure_type: str,
+    retryable: bool = False,
+    status_code: int | None = None,
+    response_type: str | None = None,
+    final_url: str | None = None,
+) -> Path:
     path = failure_path(task_root, url)
     write_json(
         path,
@@ -136,10 +160,22 @@ def record_failure(task_root: Path, *, url: str, reason: str, status_code: int |
             "status_code": status_code,
             "content_type": response_type,
             "reason": reason,
+            "failure_type": failure_type,
+            "retryable": retryable,
             "retrieved_at": now_iso(),
         },
     )
     return path
+
+
+def pdf_rejection_type(*, url: str, final_url: str, response_type: str) -> str:
+    """Treat an HTML response to a PDF request as an access issue, not missing disclosure."""
+
+    requested_pdf = Path(urlparse(url).path).suffix.lower() == ".pdf"
+    final_pdf = Path(urlparse(final_url).path).suffix.lower() == ".pdf"
+    if response_type in {"text/html", "application/xhtml+xml"} and (requested_pdf or final_pdf):
+        return "source_access_challenge"
+    return "invalid_source_payload"
 
 
 def cninfo_plate(symbol: str) -> str:
@@ -154,9 +190,17 @@ def cninfo_report_type_matches(title: str, report_type: str) -> bool:
     normalized = re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", title))
     if "摘要" in normalized:
         return False
-    annual = bool(re.search(r"\d{4}年年度报告$", normalized))
+    annual = bool(re.search(r"\d{4}(?:年年度|年度)报告$", normalized))
     first_quarter = bool(re.search(r"\d{4}年(?:第一季度|一季度)报告$", normalized))
-    return annual if report_type == "annual" else first_quarter if report_type == "q1" else annual or first_quarter
+    half_year = bool(re.search(r"\d{4}年(?:半年度|半年)报告$", normalized))
+    third_quarter = bool(re.search(r"\d{4}年(?:第三季度|三季度)报告$", normalized))
+    matches = {
+        "annual": annual,
+        "q1": first_quarter,
+        "q2": half_year,
+        "q3": third_quarter,
+    }
+    return any(matches.values()) if report_type == "all" else matches.get(report_type, False)
 
 
 def cninfo_source_url(adjunct_url: str) -> str:
@@ -182,8 +226,8 @@ def discover_cninfo_reports(
     company_name = company_name.strip()
     if not company_name:
         raise ValueError("company_name 不能为空")
-    if report_type not in {"all", "annual", "q1"}:
-        raise ValueError("report_type 必须是 all、annual 或 q1")
+    if report_type not in REPORT_TYPES:
+        raise ValueError("report_type 必须是 all、annual、q1、q2 或 q3")
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds 必须为正数")
     if max_pages <= 0:
@@ -351,8 +395,7 @@ def collect_source(
         raise ValueError("仅允许 http 或 https URL")
     if timeout_seconds <= 0 or max_bytes <= 0:
         raise ValueError("timeout_seconds 和 max_bytes 必须为正数")
-    metadata = load_research_task(task_id)
-    require_writable_task(metadata, operation="采集原始资料")
+    metadata = load_writable_task(task_id, operation="采集原始资料")
     task_root = task_directory(metadata["task_id"])
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/pdf,text/html,application/xhtml+xml"})
     open_request = opener or urlopen
@@ -363,15 +406,34 @@ def collect_source(
             response_type = content_type(response.headers)
             if status_code and int(status_code) >= 400:
                 reason = f"服务器返回 HTTP {status_code}"
-                path = record_failure(task_root, url=url, reason=reason, status_code=int(status_code), response_type=response_type, final_url=final_url)
-                return {"status": "failed", "reason": reason, "failure_path": str(path), "task": metadata["task_id"]}
+                path = record_failure(
+                    task_root,
+                    url=url,
+                    reason=reason,
+                    failure_type="http_error",
+                    retryable=int(status_code) >= 500,
+                    status_code=int(status_code),
+                    response_type=response_type,
+                    final_url=final_url,
+                )
+                return {"status": "failed", "reason": reason, "failure_type": "http_error", "failure_path": str(path), "task": metadata["task_id"]}
             payload = read_limited(response, max_bytes)
     except HTTPError as error:
-        path = record_failure(task_root, url=url, reason=f"服务器返回 HTTP {error.code}", status_code=error.code, response_type=content_type(error.headers or {}), final_url=error.geturl())
-        return {"status": "failed", "reason": f"HTTP {error.code}", "failure_path": str(path), "task": metadata["task_id"]}
+        failure_type = "http_error"
+        path = record_failure(
+            task_root,
+            url=url,
+            reason=f"服务器返回 HTTP {error.code}",
+            failure_type=failure_type,
+            retryable=error.code >= 500,
+            status_code=error.code,
+            response_type=content_type(error.headers or {}),
+            final_url=error.geturl(),
+        )
+        return {"status": "failed", "reason": f"HTTP {error.code}", "failure_type": failure_type, "failure_path": str(path), "task": metadata["task_id"]}
     except (URLError, OSError, ValueError) as error:
-        path = record_failure(task_root, url=url, reason=str(error))
-        return {"status": "failed", "reason": str(error), "failure_path": str(path), "task": metadata["task_id"]}
+        path = record_failure(task_root, url=url, reason=str(error), failure_type="transient_network", retryable=True)
+        return {"status": "failed", "reason": str(error), "failure_type": "transient_network", "failure_path": str(path), "task": metadata["task_id"]}
 
     kind, rejection_reason = payload_kind(
         payload=payload,
@@ -381,8 +443,17 @@ def collect_source(
         requested_name=filename,
     )
     if rejection_reason:
-        path = record_failure(task_root, url=url, reason=rejection_reason, status_code=int(status_code) if status_code else None, response_type=response_type, final_url=final_url)
-        return {"status": "rejected", "reason": rejection_reason, "failure_path": str(path), "task": metadata["task_id"]}
+        failure_type = pdf_rejection_type(url=url, final_url=final_url, response_type=response_type)
+        path = record_failure(
+            task_root,
+            url=url,
+            reason=rejection_reason,
+            failure_type=failure_type,
+            status_code=int(status_code) if status_code else None,
+            response_type=response_type,
+            final_url=final_url,
+        )
+        return {"status": "rejected", "reason": rejection_reason, "failure_type": failure_type, "failure_path": str(path), "task": metadata["task_id"]}
 
     raw_root = task_root / "raw"
     raw_root.mkdir(parents=True, exist_ok=True)
@@ -423,13 +494,107 @@ def collect_source(
     }
 
 
+def _collection_attempt(source: str, url: str, result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": source,
+        "url": url,
+        "status": result["status"],
+        "failure_type": result.get("failure_type"),
+        "reason": result.get("reason"),
+    }
+
+
+def collect_financial_report(
+    *,
+    task_id: str,
+    symbol: str,
+    company_name: str,
+    start_date: str,
+    end_date: str,
+    report_type: str,
+    primary_url: str | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_pages: int = 5,
+    opener: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Collect one official report with CNInfo discovery as a recoverable fallback.
+
+    An HTML security page from an exchange is never treated as evidence that the
+    company failed to disclose. The attempted sources remain in the result so a
+    browser or another official origin can continue from the exact failure.
+    """
+
+    if report_type not in REPORT_TYPES[1:]:
+        raise ValueError("collect-report 的 report_type 必须是 annual、q1、q2 或 q3")
+    attempts: list[dict[str, Any]] = []
+    if primary_url:
+        primary = collect_source(
+            task_id=task_id,
+            url=primary_url,
+            expected_type="pdf",
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            opener=opener,
+        )
+        attempts.append(_collection_attempt("primary", primary_url, primary))
+        if primary["status"] == "collected":
+            return {"status": "collected", "source": "primary", "result": primary, "attempts": attempts}
+
+    discovery = discover_cninfo_reports(
+        symbol=symbol,
+        company_name=company_name,
+        start_date=start_date,
+        end_date=end_date,
+        report_type=report_type,
+        max_pages=max_pages,
+        timeout_seconds=timeout_seconds,
+        opener=opener,
+    )
+    if discovery["status"] != "found":
+        return {
+            "status": "needs_source_resolution",
+            "reason": "CNInfo 未返回可验证的匹配定期报告；请使用公司官网、交易所公告页或浏览器定位公开原件。",
+            "attempts": attempts,
+            "cninfo_discovery": discovery,
+        }
+
+    for report in discovery["reports"]:
+        source_url = str(report["source_url"])
+        result = collect_source(
+            task_id=task_id,
+            url=source_url,
+            expected_type="pdf",
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            opener=opener,
+        )
+        attempts.append(_collection_attempt("cninfo", source_url, result))
+        if result["status"] == "collected":
+            return {
+                "status": "collected",
+                "source": "cninfo",
+                "report": report,
+                "result": result,
+                "attempts": attempts,
+            }
+
+    failure_types = {attempt.get("failure_type") for attempt in attempts}
+    status = "needs_source_resolution" if "source_access_challenge" in failure_types else "failed"
+    return {
+        "status": status,
+        "reason": "已尝试显式来源与 CNInfo 官方原件，仍未获得有效 PDF。",
+        "attempts": attempts,
+        "cninfo_discovery": discovery,
+    }
+
+
 def render_pdf_pages(*, task_id: str, source_file: str, dpi: int = 144) -> dict[str, Any]:
     """Render a staged PDF to PNG pages for manual review without text extraction."""
 
     if dpi < 72 or dpi > 300:
         raise ValueError("dpi 必须在 72 到 300 之间")
-    metadata = load_research_task(task_id)
-    require_writable_task(metadata, operation="写入 PDF 审阅页")
+    metadata = load_writable_task(task_id, operation="写入 PDF 审阅页")
     task_root = task_directory(metadata["task_id"])
     source = raw_staging_path(task_root, source_file)
     if source.suffix.lower() != ".pdf" or not source.is_file() or not source.read_bytes()[:5] == PDF_MAGIC:
@@ -478,14 +643,26 @@ def main() -> int:
     render_parser.add_argument("--source-file", required=True, help="PDF path relative to the task, for example raw/annual-report.pdf.")
     render_parser.add_argument("--dpi", type=int, default=144)
 
-    cninfo_parser = subparsers.add_parser("discover-cninfo", help="Find CNINFO annual/Q1 report PDF URLs by company name, then verify the ticker.")
+    cninfo_parser = subparsers.add_parser("discover-cninfo", help="Find CNINFO annual, interim, or quarterly report PDF URLs by company name, then verify the ticker.")
     cninfo_parser.add_argument("--symbol", required=True, help="6-digit A-share ticker, for example 000338.")
     cninfo_parser.add_argument("--company-name", required=True, help="Exact listed-company name, for example 潍柴动力.")
     cninfo_parser.add_argument("--start-date", required=True, help="Search-window start date: YYYY-MM-DD.")
     cninfo_parser.add_argument("--end-date", required=True, help="Search-window end date: YYYY-MM-DD.")
-    cninfo_parser.add_argument("--report-type", choices=("all", "annual", "q1"), default="all")
+    cninfo_parser.add_argument("--report-type", choices=REPORT_TYPES, default="all")
     cninfo_parser.add_argument("--max-pages", type=int, default=5, help="Maximum CNINFO result pages to inspect; output marks a truncated search.")
     cninfo_parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+
+    report_parser = subparsers.add_parser("collect-report", help="Collect an official financial report and fall back to CNInfo after a failed explicit source.")
+    report_parser.add_argument("--task", required=True, help="Existing active task folder below data/research-library/staging/.")
+    report_parser.add_argument("--symbol", required=True, help="6-digit A-share ticker, for example 000338.")
+    report_parser.add_argument("--company-name", required=True, help="Exact listed-company name used for CNInfo discovery.")
+    report_parser.add_argument("--start-date", required=True, help="Announcement-search start date: YYYY-MM-DD.")
+    report_parser.add_argument("--end-date", required=True, help="Announcement-search end date: YYYY-MM-DD.")
+    report_parser.add_argument("--report-type", choices=REPORT_TYPES[1:], required=True)
+    report_parser.add_argument("--url", help="Optional official company or exchange PDF URL to try before CNInfo.")
+    report_parser.add_argument("--max-pages", type=int, default=5)
+    report_parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    report_parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
 
     args = parser.parse_args()
     if args.command == "collect":
@@ -511,6 +688,21 @@ def main() -> int:
         )
         print_json(result)
         return 0 if result["status"] == "found" else 2
+    if args.command == "collect-report":
+        result = collect_financial_report(
+            task_id=args.task,
+            symbol=args.symbol,
+            company_name=args.company_name,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            report_type=args.report_type,
+            primary_url=args.url,
+            max_pages=args.max_pages,
+            timeout_seconds=args.timeout_seconds,
+            max_bytes=args.max_bytes,
+        )
+        print_json(result)
+        return 0 if result["status"] == "collected" else 2
     print_json(render_pdf_pages(task_id=args.task, source_file=args.source_file, dpi=args.dpi))
     return 0
 

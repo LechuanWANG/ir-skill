@@ -88,17 +88,17 @@ class ResearchCollectTests(unittest.TestCase):
         self.assertFalse((self.library_root / "staging" / "collection-test" / "raw").exists())
         failure = json.loads(Path(result["failure_path"]).read_text(encoding="utf-8"))
         self.assertIn("缺少 %PDF-", failure["reason"])
+        self.assertEqual(failure["failure_type"], "source_access_challenge")
 
     def test_terminal_task_rejects_new_raw_source(self) -> None:
         library.complete_research_task("collection-test")
         response = FakeResponse(b"%PDF-1.7\nlate report", url="https://exchange.example/late-report.pdf", content_type="application/pdf")
 
-        with self.assertRaisesRegex(ValueError, "已处于终态 completed"):
+        with self.assertRaisesRegex(ValueError, "已完成归档并清理"):
             collector.collect_source(task_id="collection-test", url="https://exchange.example/late-report.pdf", opener=lambda *_args, **_kwargs: response)
 
         task_root = self.library_root / "staging" / "collection-test"
-        self.assertFalse((task_root / "raw").exists())
-        self.assertFalse((task_root / "working").exists())
+        self.assertFalse(task_root.exists())
 
     def test_discovers_cninfo_original_reports_by_company_name_and_verifies_ticker(self) -> None:
         response = FakeResponse(
@@ -131,6 +131,52 @@ class ResearchCollectTests(unittest.TestCase):
         self.assertIn("searchkey=%E6%BD%8D%E6%9F%B4%E5%8A%A8%E5%8A%9B", requests[0].data.decode("utf-8"))
         self.assertIn("stock=", requests[0].data.decode("utf-8"))
         self.assertIn("category=category_ndbg_szsh", requests[0].data.decode("utf-8"))
+
+    def test_collect_report_falls_back_to_cninfo_after_exchange_returns_html(self) -> None:
+        def opener(request: object, **_kwargs: object) -> FakeResponse:
+            url = request.full_url
+            if url == "https://exchange.example/report.pdf":
+                return FakeResponse(b"<html><body>security challenge</body></html>", url=url, content_type="text/html")
+            if url == collector.CNINFO_QUERY_URL:
+                payload = {
+                    "announcements": [
+                        {
+                            "secCode": "000338",
+                            "announcementId": "annual",
+                            "announcementTitle": "2025年年度报告",
+                            "announcementTime": 1,
+                            "adjunctUrl": "finalpage/2026-03-27/annual.PDF",
+                        }
+                    ],
+                    "totalRecordNum": 1,
+                }
+                return FakeResponse(json.dumps(payload, ensure_ascii=False).encode("utf-8"), url=url, content_type="application/json")
+            if url == "https://static.cninfo.com.cn/finalpage/2026-03-27/annual.PDF":
+                return FakeResponse(b"%PDF-1.7\nannual report", url=url, content_type="application/pdf")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        result = collector.collect_financial_report(
+            task_id="collection-test",
+            symbol="000338",
+            company_name="潍柴动力",
+            start_date="2026-01-01",
+            end_date="2026-07-17",
+            report_type="annual",
+            primary_url="https://exchange.example/report.pdf",
+            opener=opener,
+        )
+
+        self.assertEqual(result["status"], "collected")
+        self.assertEqual(result["source"], "cninfo")
+        self.assertEqual([attempt["source"] for attempt in result["attempts"]], ["primary", "cninfo"])
+        self.assertEqual(result["attempts"][0]["failure_type"], "source_access_challenge")
+
+    def test_matches_interim_and_third_quarter_reports(self) -> None:
+        self.assertTrue(collector.cninfo_report_type_matches("2025年度报告", "annual"))
+        self.assertTrue(collector.cninfo_report_type_matches("2025年半年度报告", "q2"))
+        self.assertTrue(collector.cninfo_report_type_matches("2025年第三季度报告", "q3"))
+        self.assertFalse(collector.cninfo_report_type_matches("2025年度报告摘要", "annual"))
+        self.assertFalse(collector.cninfo_report_type_matches("2025年半年度报告摘要", "q2"))
 
     def test_collects_html_and_archives_agent_authored_summary(self) -> None:
         response = FakeResponse(
@@ -211,8 +257,10 @@ class ResearchCollectTests(unittest.TestCase):
         )
         library.complete_research_task("collection-test")
 
-        with self.assertRaisesRegex(ValueError, "已处于终态 completed"):
+        with self.assertRaisesRegex(ValueError, "已完成归档并清理"):
             collector.render_pdf_pages(task_id="collection-test", source_file="raw/report.pdf")
+
+        self.assertFalse(task_root.exists())
 
 
 if __name__ == "__main__":

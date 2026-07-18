@@ -303,7 +303,7 @@ class ResearchTaskStateTests(unittest.TestCase):
         self.assertTrue((task_root / library.RESEARCH_STATE_FILE).is_file())
         self.assertEqual(library.load_research_task("archive-and-resume")["status"], "active")
 
-    def test_complete_archives_every_raw_source_and_preserves_the_pdf_in_files(self) -> None:
+    def test_complete_archives_every_raw_source_and_removes_its_staging_directory(self) -> None:
         library.init_research_task("complete-and-archive", title="完成后归档")
         task_root = self.staging_root / "complete-and-archive"
         raw_path = task_root / "raw" / "annual-report.pdf"
@@ -334,7 +334,9 @@ class ResearchTaskStateTests(unittest.TestCase):
 
         self.assertEqual(result["task_state"]["status"], "completed")
         self.assertEqual(result["archive"]["pdf_sources_archived"], 1)
+        self.assertTrue(result["staging_cleanup"]["task_directory_removed"])
         self.assertFalse(raw_path.exists())
+        self.assertFalse(task_root.exists())
         archived_pdfs = list((self.library_root / "files").rglob("*.pdf"))
         self.assertEqual(len(archived_pdfs), 1)
         self.assertEqual(archived_pdfs[0].read_bytes(), b"%PDF-1.7\noriginal disclosure")

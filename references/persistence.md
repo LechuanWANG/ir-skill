@@ -4,7 +4,7 @@
 
 ## 四类存储
 
-- `report/<domain>/<subject>/`：面向用户的正式研究报告和决策备忘录。
+- `report/<domain>/<YYYY-MM-DD>/`：面向用户的正式研究报告和决策备忘录；日期目录按报告 `as_of` 命名。
 - `data/research-library/database/`：可重复计算和比较的 SQLite 数据。
 - `data/research-library/staging/<task-id>/` 与 `files/`：本轮原始资料、临时工作物和经整理的事实型资料。
 - `docs/investment-llm-wiki/wiki/`：仅在用户明确启用时维护的综合研究记忆。
@@ -29,9 +29,9 @@ python3 scripts/research_task_state.py checkpoint --task <task-id>
 python3 scripts/research_task_state.py complete --task <task-id>
 ```
 
-在 `research-state.md` 自由记录最小充分恢复信息：目标与约束、`as_of`、已核验/推断/未知、关键证据位置、当前判断、放弃路径、下一步和完成条件。只在范围、证据批次、判断或阶段变化时 checkpoint，不在每次工具调用后更新。
+在 `research-state.md` 记录足以完整恢复判断与核验路径的信息：目标与约束、`as_of`、已核验/推断/未知、关键证据位置、当前判断、放弃路径、下一步和完成条件。状态应让后续研究者能辨认哪些结论已被证据支持、哪些仍待验证；上下文或运行时间压力不是省略关键状态的理由。只在范围、证据批次、判断或阶段变化时 checkpoint，不在每次工具调用后更新。
 
-恢复时只选择与当前问题匹配的 active/blocked 任务，核对 `as_of`、文件和 SQLite 最新日期，再加载状态指向的证据；不要扫描或混合全部旧任务。状态与原始证据冲突时以原始证据为准。
+恢复时只选择与当前问题匹配的 active/blocked 任务，核对 `as_of`、文件和 SQLite 最新日期，再加载状态指向的证据；不要扫描或混合全部旧任务，以免混入不适用的时间边界或观点。状态与原始证据冲突时以原始证据为准。
 
 ## 原始资料归档
 
@@ -40,7 +40,7 @@ python3 scripts/research_task_state.py complete --task <task-id>
 1. 先放入 `data/research-library/staging/<task-id>/raw/`。
 2. Agent 逐一审阅原件并决定：整理为可复用资料、保留待核验，或以明确理由丢弃；不要机械转写 HTML、JSON、CSV、工具日志或线性 PDF 文本。
 3. 在 `archive-plan.json` 中写入文档内容、来源和丢弃决定；计划必须覆盖 `raw/` 下每一份文件，重要原件进入文档的 `source_files`，其余文件写入 `discard_files`。字段与最新约束以 `python3 scripts/curate_research_library.py archive --help` 和脚本校验为准。
-4. 研究完成时执行 `python3 scripts/research_task_state.py complete --task <task-id>`；它会先应用归档计划，再将任务置为终态。需要在仍可恢复的任务中提前整理资料时，才显式运行 `curate_research_library.py archive --apply`。
+4. 研究完成时执行 `python3 scripts/research_task_state.py complete --task <task-id>`；它会先应用归档计划，再将任务置为终态并删除整个 `staging/<task-id>/`。正式报告、归档资料和 SQLite 是完成后的持久去向，`staging/` 不是恢复仓库。需要在仍可恢复的 active/blocked 任务中提前整理资料时，才显式运行 `curate_research_library.py archive --apply`。
 
 复杂 PDF 默认保留原件。完成渲染查看并记录页码、表名和关键口径后，`pdf_validations` 只用于说明核验程度；原始 PDF 仍随资料摘要归档至 `files/`，不在完成任务时删除。日线、估值、资金、涨跌停、交易日历和披露日历等日常结构化查询只进入 SQLite 或任务暂存区。
 
@@ -68,7 +68,19 @@ python3 scripts/research_collect.py render-pdf \
 
 ## 正式报告
 
-需要保存的正式报告使用可读标题和研究时点，写入 `report/<domain>/<subject>/`，并包含：
+需要保存的正式报告按以下布局写入：
+
+```
+report/<domain>/<YYYY-MM-DD>/<YYYY-MM-DD>-<完整主题>-<报告类型>.md
+```
+
+- `<domain>` 使用 `market`、`company`、`industry`、`macro` 等领域名。
+- 日期目录与文件名前缀使用报告 `as_of`，格式为 `YYYY-MM-DD`。
+- Markdown 文件名必须写全研究主题和报告类型，使用可读的连字符命名；不得只命名为 `report.md`、`analysis.md`、`memo.md` 或其他缩写。
+- 示例：`report/company/2026-07-18/2026-07-18-china-shenhua-short-term-trading-screen.md`。
+- 仅对新建报告使用此约定。除非用户明确要求，不重命名或迁移既有报告。
+
+报告仍须包含：
 
 ```yaml
 ---

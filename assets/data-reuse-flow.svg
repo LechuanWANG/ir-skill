@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1180" viewBox="0 0 1200 1180" role="img" aria-labelledby="title desc">
+  <title id="title">IR Skill 数据复用系统</title>
+  <desc id="desc">TuShare 数据、原始披露和研究输入先经过任务暂存、校验和归档决策，再分别进入 SQLite 数据层、可复用资料库、正式报告和 LLM Wiki，最终由 Research Hub 和按授权运行的 Codex Agent 复用。</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .ink { fill: #172033; }
+      .muted { fill: #52637a; }
+      .title { font: 700 40px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; letter-spacing: 1px; }
+      .subtitle { font: 500 21px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
+      .section { font: 700 27px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
+      .label { font: 700 24px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
+      .body { font: 500 18px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
+      .small { font: 500 17px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
+      .card { fill: #ffffff; stroke: #d7e0eb; stroke-width: 2; }
+      .line { fill: none; stroke: #8ca0ba; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M1,1 L10,6 L1,11 Z" fill="#8ca0ba"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1200" height="1180" rx="24"/>
+  <rect x="40" y="34" width="1120" height="104" rx="18" fill="#10233f"/>
+  <text x="74" y="80" class="title" fill="#ffffff">一次采集，多层沉淀，按用途复用</text>
+  <text x="74" y="114" class="subtitle" fill="#c9d8ec">数据、原件、正式报告和 Wiki 不再散落在临时目录或聊天记录里</text>
+  <rect x="912" y="62" width="202" height="42" rx="21" fill="#168274"/>
+  <text x="1013" y="90" text-anchor="middle" class="small" fill="#ffffff">本地优先 · 默认不上传</text>
+
+  <text x="42" y="180" class="section ink">1. 每一种来源先进入可恢复的任务链路</text>
+
+  <rect class="card" x="42" y="208" width="348" height="108" rx="16"/>
+  <rect x="42" y="208" width="10" height="108" rx="5" fill="#0f766e"/>
+  <text x="74" y="252" class="label ink">TuShare 与市场数据</text>
+  <text x="74" y="284" class="body muted">行情 · 估值 · 资金流 · 财务</text>
+
+  <rect class="card" x="426" y="208" width="348" height="108" rx="16"/>
+  <rect x="426" y="208" width="10" height="108" rx="5" fill="#2563eb"/>
+  <text x="458" y="252" class="label ink">原始披露与公开材料</text>
+  <text x="458" y="284" class="body muted">公告 · 财报 · 网页 · PDF</text>
+
+  <rect class="card" x="810" y="208" width="348" height="108" rx="16"/>
+  <rect x="810" y="208" width="10" height="108" rx="5" fill="#c2410c"/>
+  <text x="842" y="252" class="label ink">研究过程与用户输入</text>
+  <text x="842" y="284" class="body muted">任务 · 候选 · 已授权偏好</text>
+
+  <path class="line" d="M216 316 L216 344 L470 344 L470 392"/>
+  <path class="line" d="M600 316 L600 392"/>
+  <path class="line" d="M984 316 L984 344 L730 344 L730 392"/>
+
+  <rect x="300" y="392" width="600" height="134" rx="20" fill="#edf5ff" stroke="#91b8ee" stroke-width="2"/>
+  <text x="600" y="438" text-anchor="middle" class="label ink">任务暂存、校验与归档决策</text>
+  <text x="600" y="470" text-anchor="middle" class="body muted">staging/&lt;task&gt;/raw/ · 核验来源、文件与状态</text>
+  <text x="600" y="498" text-anchor="middle" class="small" fill="#2563eb">archive-plan 覆盖每个原件；完成后任务冻结</text>
+
+  <text x="42" y="614" class="section ink">2. 将信息存成四类可调用资产</text>
+
+  <path class="line" d="M600 526 L600 568 L310 568 L310 650"/>
+  <path class="line" d="M600 526 L600 568 L890 568 L890 650"/>
+  <path class="line" d="M600 526 L600 818 L310 818 L310 836"/>
+  <path class="line" d="M600 526 L600 818 L890 818 L890 836"/>
+
+  <rect class="card" x="60" y="650" width="500" height="140" rx="18"/>
+  <rect x="60" y="650" width="500" height="10" rx="5" fill="#0f766e"/>
+  <text x="90" y="696" class="label ink">SQLite 数据层</text>
+  <text x="90" y="728" class="body muted">任意 endpoint 缓存 + 规范化核心表</text>
+  <text x="90" y="756" class="small muted">数据时点 · 版本 · 修订</text>
+  <text x="90" y="780" class="small" fill="#0f766e">查询、计算、更新</text>
+
+  <rect class="card" x="640" y="650" width="500" height="140" rx="18"/>
+  <rect x="640" y="650" width="500" height="10" rx="5" fill="#2563eb"/>
+  <text x="670" y="696" class="label ink">可复用资料库</text>
+  <text x="670" y="728" class="body muted">审阅后的 Markdown 与 PDF 原件</text>
+  <text x="670" y="756" class="small muted">主题目录 · 来源追溯</text>
+  <text x="670" y="780" class="small" fill="#2563eb">公司、行业与宏观研究</text>
+
+  <rect class="card" x="60" y="836" width="500" height="140" rx="18"/>
+  <rect x="60" y="836" width="500" height="10" rx="5" fill="#c2410c"/>
+  <text x="90" y="882" class="label ink">正式报告层</text>
+  <text x="90" y="914" class="body muted">研究报告 · 筛选报告 · 决策备忘录</text>
+  <text x="90" y="942" class="small muted">独立于缓存与原件</text>
+  <text x="90" y="966" class="small" fill="#c2410c">交付、复盘、横向比较</text>
+
+  <rect class="card" x="640" y="836" width="500" height="140" rx="18"/>
+  <rect x="640" y="836" width="500" height="10" rx="5" fill="#a21caf"/>
+  <text x="670" y="882" class="label ink">LLM Wiki</text>
+  <text x="670" y="914" class="body muted">明确授权后入库</text>
+  <text x="670" y="942" class="small muted">来源 · 链接 · 领域校验</text>
+  <text x="670" y="966" class="small" fill="#a21caf">长期假设、交接、复盘</text>
+
+  <path class="line" d="M600 976 L600 1054"/>
+
+  <rect x="150" y="1054" width="900" height="82" rx="20" fill="#172033"/>
+  <text x="600" y="1087" text-anchor="middle" class="label" fill="#ffffff">Research Hub + 按授权运行的 Codex Agent</text>
+  <text x="600" y="1115" text-anchor="middle" class="small" fill="#c9d8ec">按当前问题读取需要的资产；研究越做，资料越可复用</text>
+</svg>

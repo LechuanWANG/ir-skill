@@ -18,9 +18,14 @@ from market_data_store import (
     persist_tushare_collection,
     write_tushare_capabilities,
 )
-from technical_indicators import TechnicalIndicatorSettings, calculate_technical_indicators
+from technical_indicators import (
+    TechnicalIndicatorSettings,
+    calculate_technical_indicators,
+    summarize_technical_indicators,
+)
 from tushare_gateway import request_endpoint
 from tushare_sync import create_tushare_client
+from tushare_transport import TushareEndpointError, TushareRequestPolicy
 
 
 DATE_FORMAT = "%Y%m%d"
@@ -42,9 +47,9 @@ MODE_ALIASES = {
     "short-term": "short",
 }
 FINANCIAL_FACTS_POLICY = (
-    "公司年报、半年报、季报等 PDF 原始披露，以及交易所/公司公告，是收入、利润、现金流、"
-    "资产负债表和关键财务口径的最终事实来源。此脚本不复算、不核验、不替代这些披露；"
-    "TuShare 的财务相关字段只可用于发现披露、时间线和待进一步阅读的线索。"
+    "TuShare 是结构化财务筛选、披露时间线和横向比较的默认来源。公司年报、半年报、季报等"
+    "原始披露，以及交易所/公司公告，仍是报告级收入、利润、现金流、资产负债表和关键财务"
+    "口径的最终核验来源；只有需要正式引用、单位/币种/合并范围确认或处理修订冲突时才读取原件。"
 )
 
 
@@ -699,24 +704,46 @@ def _run_fetch(args: argparse.Namespace) -> int:
         print(json.dumps(plan, ensure_ascii=False, default=str, indent=2))
         return 0
 
-    client = create_tushare_client()
+    client = create_tushare_client(env_path=args.env_file)
+    request_policy = TushareRequestPolicy(
+        min_interval_seconds=args.min_request_interval,
+        max_attempts=args.max_attempts,
+    )
     results: list[dict[str, Any]] = []
     capabilities: list[dict[str, Any]] = []
     failures = 0
     for spec in selected_specs:
         request = _request_for_spec(spec, context)
         try:
-            frame = request_endpoint(client, spec.endpoint, request["params"])
-        except (RuntimeError, ValueError) as exc:
+            frame = request_endpoint(client, spec.endpoint, request["params"], policy=request_policy)
+        except TushareEndpointError as exc:
             failures += 1
             error = str(exc)
-            capabilities.append(_capability_record(spec, "unavailable", error=error))
+            capabilities.append(_capability_record(spec, "unavailable", error=exc.category))
             results.append(
                 {
                     "key": spec.key,
                     "endpoint": spec.endpoint,
                     "status": "unavailable",
                     "error": error,
+                    "error_type": exc.category,
+                    "attempts": exc.attempts,
+                    "retryable": exc.retryable,
+                    "permission_sensitive": spec.permission_sensitive,
+                }
+            )
+            continue
+        except ValueError as exc:
+            failures += 1
+            error = str(exc)
+            capabilities.append(_capability_record(spec, "unavailable", error="invalid_endpoint"))
+            results.append(
+                {
+                    "key": spec.key,
+                    "endpoint": spec.endpoint,
+                    "status": "unavailable",
+                    "error": error,
+                    "error_type": "invalid_endpoint",
                     "permission_sensitive": spec.permission_sensitive,
                 }
             )
@@ -819,6 +846,7 @@ def _run_indicators(args: argparse.Namespace) -> int:
     volume_series = volumes[args.symbol].reindex(close_prices.index) if args.symbol in volumes else None
     indicators = calculate_technical_indicators(close_prices, volume_series, settings=settings)
     latest_record = _indicator_latest_record(indicators)
+    technical_snapshot = summarize_technical_indicators(indicators, settings=settings)
     unavailable_indicators = [
         field
         for field, value in latest_record.items()
@@ -836,6 +864,7 @@ def _run_indicators(args: argparse.Namespace) -> int:
         "sufficient_history_for_standard_set": len(indicators) >= settings.warmup_observations,
         "settings": asdict(settings),
         "latest": latest_record,
+        "technical_snapshot": technical_snapshot,
         "unavailable_latest_indicators": unavailable_indicators,
         "output": str(output) if output else None,
         "interpretation_boundary": (
@@ -858,6 +887,9 @@ def _add_common_arguments(parser: argparse.ArgumentParser, *, require_end_date: 
     )
     parser.add_argument("--start-date", type=_date, help="YYYYMMDD; defaults to a mode-specific lookback window")
     parser.add_argument("--end-date", type=_date, required=require_end_date, help="YYYYMMDD research as_of date")
+    parser.add_argument("--env-file", type=Path, help="Optional dotenv path used when no process token is set")
+    parser.add_argument("--min-request-interval", type=_positive_float, default=0.6, help="Minimum seconds between TuShare calls")
+    parser.add_argument("--max-attempts", type=_positive_int, default=3, help="Attempts for rate-limit and transient-network failures")
     parser.add_argument(
         "--datasets",
         nargs="+",
