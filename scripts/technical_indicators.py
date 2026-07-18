@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
+from math import isfinite, sqrt
+from typing import Any
 
 import pandas as pd
 
@@ -175,3 +176,175 @@ def calculate_technical_indicators(
         ).sum().replace(0, float("nan"))
 
     return result
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _change_over_sessions(series: pd.Series, sessions: int) -> float | None:
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    if len(values) <= sessions:
+        return None
+    return _finite_number(values.iloc[-1] - values.iloc[-1 - sessions])
+
+
+def _last_macd_cross(histogram: pd.Series, lookback_sessions: int) -> dict[str, Any] | None:
+    values = pd.to_numeric(histogram, errors="coerce").dropna().tail(lookback_sessions + 1)
+    if len(values) < 2:
+        return None
+    for position in range(len(values) - 1, 0, -1):
+        previous = float(values.iloc[position - 1])
+        current = float(values.iloc[position])
+        if previous <= 0 < current:
+            direction = "crossed_above_signal"
+        elif previous >= 0 > current:
+            direction = "crossed_below_signal"
+        else:
+            continue
+        return {
+            "trade_date": pd.Timestamp(values.index[position]).strftime("%Y-%m-%d"),
+            "direction": direction,
+            "sessions_ago": len(values) - 1 - position,
+        }
+    return None
+
+
+def summarize_technical_indicators(
+    indicators: pd.DataFrame,
+    *,
+    settings: TechnicalIndicatorSettings = TechnicalIndicatorSettings(),
+    change_sessions: int = 5,
+    cross_lookback_sessions: int = 10,
+) -> dict[str, Any]:
+    """Build a compact, descriptive snapshot for short-horizon research."""
+    settings.validate()
+    if indicators.empty:
+        raise ValueError("cannot summarize an empty technical-indicator history")
+    if change_sessions <= 0 or cross_lookback_sessions <= 0:
+        raise ValueError("technical snapshot lookback windows must be greater than zero")
+
+    latest = indicators.iloc[-1]
+
+    def value(column: str) -> float | None:
+        return _finite_number(latest.get(column))
+
+    sma_short = value(f"sma_{settings.sma_short}")
+    sma_long = value(f"sma_{settings.sma_long}")
+    sma_alignment = None
+    if sma_short is not None and sma_long is not None:
+        sma_alignment = "short_above_long" if sma_short > sma_long else "short_below_or_equal_long"
+
+    rsi_column = f"rsi_{settings.rsi_window}"
+    rsi = value(rsi_column)
+    if rsi is None:
+        rsi_zone = None
+    elif rsi <= 30:
+        rsi_zone = "at_or_below_30"
+    elif rsi >= 70:
+        rsi_zone = "at_or_above_70"
+    else:
+        rsi_zone = "between_30_and_70"
+
+    histogram = indicators["macd_histogram"] if "macd_histogram" in indicators else pd.Series(dtype=float)
+    histogram_value = value("macd_histogram")
+    if histogram_value is None:
+        macd_position = None
+    elif histogram_value > 0:
+        macd_position = "above_signal"
+    elif histogram_value < 0:
+        macd_position = "below_signal"
+    else:
+        macd_position = "at_signal"
+
+    percent_b = value(f"bollinger_percent_b_{settings.bollinger_window}")
+    if percent_b is None:
+        bollinger_location = None
+    elif percent_b < 0:
+        bollinger_location = "below_lower_band"
+    elif percent_b > 1:
+        bollinger_location = "above_upper_band"
+    elif percent_b < 0.5:
+        bollinger_location = "lower_half"
+    else:
+        bollinger_location = "upper_half"
+
+    volume_ratio_column = f"volume_ratio_{settings.volume_window}d"
+    volume_ratio = value(volume_ratio_column)
+    if volume_ratio is None:
+        volume_regime = None
+    elif volume_ratio < 0.8:
+        volume_regime = "below_recent_average"
+    elif volume_ratio > 1.2:
+        volume_regime = "above_recent_average"
+    else:
+        volume_regime = "near_recent_average"
+
+    dimensions = {
+        "trend": {
+            "close_qfq": value("close_qfq"),
+            f"return_{settings.sma_short}d": value(f"return_{settings.sma_short}d"),
+            f"price_vs_sma_{settings.sma_short}": value(f"price_vs_sma_{settings.sma_short}"),
+            f"price_vs_sma_{settings.sma_long}": value(f"price_vs_sma_{settings.sma_long}"),
+            "sma_alignment": sma_alignment,
+        },
+        "momentum": {
+            "macd_line": value(f"macd_{settings.macd_fast}_{settings.macd_slow}"),
+            "macd_signal": value(f"macd_signal_{settings.macd_signal}"),
+            "macd_histogram": histogram_value,
+            f"macd_histogram_change_{change_sessions}d": _change_over_sessions(histogram, change_sessions),
+            "macd_position": macd_position,
+            f"last_macd_cross_within_{cross_lookback_sessions}d": _last_macd_cross(
+                histogram,
+                cross_lookback_sessions,
+            ),
+            rsi_column: rsi,
+            f"rsi_change_{change_sessions}d": (
+                _change_over_sessions(indicators[rsi_column], change_sessions)
+                if rsi_column in indicators
+                else None
+            ),
+            "rsi_zone": rsi_zone,
+        },
+        "risk_and_location": {
+            f"volatility_{settings.sma_short}d_annualized": value(
+                f"volatility_{settings.sma_short}d_annualized"
+            ),
+            f"bollinger_percent_b_{settings.bollinger_window}": percent_b,
+            f"bollinger_bandwidth_{settings.bollinger_window}": value(
+                f"bollinger_bandwidth_{settings.bollinger_window}"
+            ),
+            "bollinger_location": bollinger_location,
+        },
+        "participation": {
+            volume_ratio_column: volume_ratio,
+            f"price_volume_correlation_{settings.volume_window}d": value(
+                f"price_volume_correlation_{settings.volume_window}d"
+            ),
+            f"up_volume_share_{settings.volume_window}d": value(
+                f"up_volume_share_{settings.volume_window}d"
+            ),
+            "volume_regime": volume_regime,
+        },
+    }
+    available_dimensions = [
+        name
+        for name, observations in dimensions.items()
+        if any(item is not None for item in observations.values())
+    ]
+    return {
+        "as_of_trade_date": pd.Timestamp(indicators.index[-1]).strftime("%Y-%m-%d"),
+        "change_lookback_sessions": change_sessions,
+        "cross_lookback_sessions": cross_lookback_sessions,
+        "dimensions": dimensions,
+        "available_dimensions": available_dimensions,
+        "missing_dimensions": [name for name in dimensions if name not in available_dimensions],
+        "usage_boundary": (
+            "These labels describe price, momentum, risk, and participation states. "
+            "They are not a composite score or an automatic buy/sell signal."
+        ),
+    }

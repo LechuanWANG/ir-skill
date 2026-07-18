@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import Lock, Thread
 from urllib.parse import parse_qs, unquote, urlparse
 
+from project_context import SKILL_ROOT
 from research_library import (
     DOMAIN_LABELS,
     KIND_LABELS,
@@ -34,11 +35,18 @@ from research_library import (
     record_preview,
     save_profile,
 )
+from tushare_config import (
+    DEFAULT_ENV_PATH as TUSHARE_ENV_PATH,
+    read_env_values as read_config_values,
+    tushare_config_status,
+    update_env_values as update_config_values,
+)
 from tushare_sync import SyncConfig, sync_daily, sync_factor_data
 
 
-WEB_DIST = PROJECT_ROOT / "web" / "dist"
-ENV_PATH = PROJECT_ROOT / ".env"
+# The browser UI is part of the Skill distribution; all user-owned data is project-scoped.
+WEB_DIST = SKILL_ROOT / "web" / "dist"
+ENV_PATH = TUSHARE_ENV_PATH
 SECRET_ENV_KEYS = {"TUSHARE_TOKEN"}
 COMMON_ENV_KEYS = ("TUSHARE_TOKEN",)
 TABLE_LABELS = {
@@ -90,46 +98,11 @@ def read_request_json(handler: BaseHTTPRequestHandler) -> dict[str, object]:
 
 
 def read_env_values() -> dict[str, str]:
-    if not ENV_PATH.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in ENV_PATH.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key.strip():
-            values[key.strip()] = value.strip().strip("\"'")
-    return values
+    return read_config_values(ENV_PATH)
 
 
 def update_env_values(updates: dict[str, str]) -> None:
-    existing_lines = ENV_PATH.read_text(encoding="utf-8", errors="replace").splitlines() if ENV_PATH.is_file() else []
-    output: list[str] = []
-    handled: set[str] = set()
-    for raw_line in existing_lines:
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            output.append(raw_line)
-            continue
-        key = stripped.split("=", 1)[0].strip()
-        if key not in updates:
-            output.append(raw_line)
-            continue
-        if key in handled:
-            continue
-        handled.add(key)
-        value = updates[key]
-        if value:
-            output.append(f"{key}={value}")
-    for key, value in updates.items():
-        if key not in handled and value:
-            output.append(f"{key}={value}")
-    ENV_PATH.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
-    try:
-        ENV_PATH.chmod(0o600)
-    except OSError:
-        pass
+    update_config_values(updates, ENV_PATH)
 
 
 def safe_table_name(name: str) -> str:
@@ -471,6 +444,7 @@ class ResearchHubHandler(BaseHTTPRequestHandler):
                     {"key": key, "has_value": bool(values.get(key)), "secret": key in SECRET_ENV_KEYS}
                     for key in COMMON_ENV_KEYS
                 ],
+                "tushare_config": tushare_config_status(),
             },
         )
 

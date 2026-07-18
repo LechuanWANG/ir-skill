@@ -14,8 +14,12 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from project_context import project_paths
 
-DEFAULT_DB_PATH = Path("data/research-library/database/investment_research.sqlite")
+
+# Resolve once per process so command-line defaults always belong to the selected project,
+# never to the installed Skill package.
+DEFAULT_DB_PATH = project_paths().database_path
 DAILY_TABLE = "a_share_daily"
 DAILY_BASIC_TABLE = "a_share_daily_basic"
 FINA_INDICATOR_TABLE = "a_share_fina_indicator"

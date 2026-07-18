@@ -14,20 +14,23 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from project_context import project_paths
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REPORT_ROOT = PROJECT_ROOT / "report"
-LIBRARY_ROOT = PROJECT_ROOT / "data" / "research-library"
-LIBRARY_FILES = LIBRARY_ROOT / "files"
-STAGING_ROOT = LIBRARY_ROOT / "staging"
-LIBRARY_DATABASE = LIBRARY_ROOT / "database" / "investment_research.sqlite"
+
+_PATHS = project_paths()
+PROJECT_ROOT = _PATHS.root
+REPORT_ROOT = _PATHS.report_root
+LIBRARY_ROOT = _PATHS.library_root
+LIBRARY_FILES = _PATHS.library_files
+STAGING_ROOT = _PATHS.staging_root
+LIBRARY_DATABASE = _PATHS.database_path
 CATALOG_PATH = LIBRARY_ROOT / "catalog.json"
 WIKI_QUEUE_PATH = LIBRARY_ROOT / "wiki-ingest-queue.json"
-PROFILE_PATH = LIBRARY_ROOT / "settings" / "investor-profile.json"
-TRASH_ROOT = LIBRARY_ROOT / "trash"
+PROFILE_PATH = _PATHS.settings_root / "investor-profile.json"
+TRASH_ROOT = _PATHS.trash_root
 LEGACY_DATABASE = PROJECT_ROOT / "data" / "investment_research.sqlite"
-WIKI_ROOT = PROJECT_ROOT / "docs" / "investment-llm-wiki"
-WIKI_RAW_ROOT = WIKI_ROOT / "raw"
+WIKI_ROOT = _PATHS.wiki_root
+WIKI_RAW_ROOT = _PATHS.wiki_raw_root
 
 DOMAIN_LABELS = {
     "company": "个股",
@@ -1219,7 +1222,7 @@ def finish_research_task(task_id: str, *, status: str) -> dict[str, Any]:
 
 
 def complete_research_task(task_id: str) -> dict[str, Any]:
-    """Archive every raw source before a task enters its completed retention window."""
+    """Archive every raw source, then remove the completed task's staging directory."""
 
     metadata = load_research_task(task_id)
     task_root = task_directory(metadata["task_id"])
@@ -1230,9 +1233,12 @@ def complete_research_task(task_id: str) -> dict[str, Any]:
     if remaining_raw_sources:
         remaining = ", ".join(sorted(str(path.relative_to(task_root)) for path in remaining_raw_sources))
         raise RuntimeError(f"任务 {metadata['task_id']} 仍有未归档原始资料，不能完成：{remaining}")
+    task_state = finish_research_task(metadata["task_id"], status="completed")
+    shutil.rmtree(task_root)
     return {
-        "task_state": finish_research_task(metadata["task_id"], status="completed"),
+        "task_state": task_state,
         "archive": archive,
+        "staging_cleanup": {"task_directory_removed": not task_root.exists()},
     }
 
 

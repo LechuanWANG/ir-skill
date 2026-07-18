@@ -22,6 +22,7 @@ from market_data_store import (
     write_tushare_capabilities,
 )
 from tushare_sync import create_tushare_client
+from tushare_transport import TushareEndpointError, TushareRequestPolicy, request_endpoint
 
 
 DEFAULT_PREVIEW_ROWS = 20
@@ -93,19 +94,6 @@ def _redact(value: Any) -> Any:
     return value
 
 
-def request_endpoint(client: Any, endpoint: str, params: dict[str, Any]) -> pd.DataFrame:
-    method = getattr(client, endpoint, None)
-    if not callable(method):
-        raise ValueError(f"TuShare client does not expose endpoint '{endpoint}'")
-    try:
-        frame = method(**params)
-    except Exception as exc:
-        raise RuntimeError(f"TuShare endpoint '{endpoint}' failed: {exc}") from exc
-    if not isinstance(frame, pd.DataFrame):
-        raise RuntimeError(f"TuShare endpoint '{endpoint}' returned {type(frame).__name__}, not a DataFrame")
-    return frame
-
-
 def _write_output(frame: pd.DataFrame, output: Path) -> Path:
     suffix = output.suffix.lower()
     if suffix not in {".csv", ".json"}:
@@ -155,7 +143,16 @@ def _run_fetch(args: argparse.Namespace) -> int:
         )
         return 0
 
-    frame = request_endpoint(create_tushare_client(), args.endpoint, params)
+    policy = TushareRequestPolicy(
+        min_interval_seconds=args.min_request_interval,
+        max_attempts=args.max_attempts,
+    )
+    frame = request_endpoint(
+        create_tushare_client(env_path=args.env_file),
+        args.endpoint,
+        params,
+        policy=policy,
+    )
     cached_rows = 0
     normalized_rows = 0
     if args.cache:
@@ -196,7 +193,7 @@ def _run_probe(args: argparse.Namespace) -> int:
 
     frame: pd.DataFrame | None = None
     try:
-        client = create_tushare_client()
+        client = create_tushare_client(env_path=args.env_file)
     except RuntimeError as exc:
         record: dict[str, Any] = {
             "endpoint": args.endpoint,
@@ -206,12 +203,27 @@ def _run_probe(args: argparse.Namespace) -> int:
         exit_code = 2
     else:
         try:
-            frame = request_endpoint(client, args.endpoint, params)
-        except (RuntimeError, ValueError) as exc:
+            policy = TushareRequestPolicy(
+                min_interval_seconds=args.min_request_interval,
+                max_attempts=args.max_attempts,
+            )
+            frame = request_endpoint(client, args.endpoint, params, policy=policy)
+        except TushareEndpointError as exc:
             record = {
                 "endpoint": args.endpoint,
                 "status": "unavailable",
                 "error": str(exc),
+                "error_type": exc.category,
+                "attempts": exc.attempts,
+            }
+            exit_code = 1
+        except ValueError as exc:
+            record = {
+                "endpoint": args.endpoint,
+                "status": "unavailable",
+                "error": str(exc),
+                "error_type": "invalid_endpoint",
+                "attempts": 0,
             }
             exit_code = 1
         else:
@@ -232,7 +244,7 @@ def _run_probe(args: argparse.Namespace) -> int:
             if key != "error"
         }
         if "error" in record:
-            cached_record["error_type"] = "endpoint_request_failed"
+            cached_record.setdefault("error_type", "endpoint_request_failed")
         write_tushare_capabilities([cached_record], db_path=args.db_path)
         if frame is not None:
             cached_rows, normalized_rows = persist_tushare_collection(
@@ -280,6 +292,9 @@ def _add_request_arguments(parser: argparse.ArgumentParser) -> None:
     params_group.add_argument("--params-file", type=Path, help="Path to a JSON object of endpoint parameters")
     parser.add_argument("--fields", help="Optional comma-separated TuShare fields")
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument("--env-file", type=Path, help="Optional dotenv path used when no process token is set")
+    parser.add_argument("--min-request-interval", type=float, default=0.6, help="Minimum seconds between retries or endpoint calls in this command")
+    parser.add_argument("--max-attempts", type=_positive_int, default=3, help="Attempts for rate-limit and transient-network failures")
     parser.add_argument(
         "--cache",
         action=argparse.BooleanOptionalAction,

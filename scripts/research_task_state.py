@@ -45,7 +45,7 @@ def main() -> int:
     validate_parser = subparsers.add_parser("validate", help="Check lifecycle metadata and require non-empty Markdown without enforcing headings or fields.")
     validate_parser.add_argument("--task", required=True)
 
-    complete_parser = subparsers.add_parser("complete", help="Archive all raw sources, then finish a task and start its recovery retention window.")
+    complete_parser = subparsers.add_parser("complete", help="Archive all raw sources, finish the task, then remove its staging directory.")
     complete_parser.add_argument("--task", required=True)
 
     abandon_parser = subparsers.add_parser("abandon", help="Abandon a task and start its recovery retention window.")
