@@ -15,12 +15,13 @@
       .card { fill: #ffffff; stroke: #d7e0eb; stroke-width: 2; }
       .line { fill: none; stroke: #8ca0ba; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
     </style>
-    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
-      <path d="M1,1 L10,6 L1,11 Z" fill="#8ca0ba"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7.5" refY="5" orient="auto">
+      <path d="M1,1 L8.5,5 L1,9 Z" fill="#8ca0ba"/>
     </marker>
   </defs>
 
   <rect class="bg" width="1200" height="1180" rx="24"/>
+  <g transform="translate(48 47) scale(0.92)">
   <rect x="40" y="34" width="1120" height="104" rx="18" fill="#10233f"/>
   <text x="74" y="80" class="title" fill="#ffffff">一次采集，多层沉淀，按用途复用</text>
   <text x="74" y="114" class="subtitle" fill="#c9d8ec">数据、原件、正式报告和 Wiki 不再散落在临时目录或聊天记录里</text>
@@ -93,4 +94,5 @@
   <rect x="150" y="1054" width="900" height="82" rx="20" fill="#172033"/>
   <text x="600" y="1087" text-anchor="middle" class="label" fill="#ffffff">Research Hub + 按授权运行的 Codex Agent</text>
   <text x="600" y="1115" text-anchor="middle" class="small" fill="#c9d8ec">按当前问题读取需要的资产；研究越做，资料越可复用</text>
+  </g>
 </svg>
