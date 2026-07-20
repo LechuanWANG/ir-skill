@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
+import research_library as library
 from research_library import load_research_task, raw_staging_path, safe_segment, task_directory, write_json
 
 
@@ -30,6 +31,12 @@ CNINFO_QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_STATIC_BASE_URL = "https://static.cninfo.com.cn/"
 CNINFO_REFERER = "http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice"
 REPORT_TYPES = ("all", "annual", "q1", "q2", "q3")
+CNINFO_REPORT_CATEGORIES = {
+    "annual": "category_ndbg_szsh",
+    "q1": "category_yjdbg_szsh",
+    "q2": "category_bndbg_szsh",
+    "q3": "category_sjdbg_szsh",
+}
 
 
 def require_writable_task(metadata: dict[str, Any], *, operation: str) -> None:
@@ -203,6 +210,250 @@ def cninfo_report_type_matches(title: str, report_type: str) -> bool:
     return any(matches.values()) if report_type == "all" else matches.get(report_type, False)
 
 
+def report_title_year(title: str) -> int | None:
+    normalized = re.sub(r"<[^>]+>", "", title)
+    match = re.search(r"(?<!\d)(\d{4})年", normalized)
+    return int(match.group(1)) if match else None
+
+
+def report_period_years(start_date: str, end_date: str, report_type: str) -> set[int]:
+    """Infer the report years that can be announced inside a search window."""
+
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise ValueError("start_date 和 end_date 必须为 YYYY-MM-DD") from error
+    if start > end:
+        raise ValueError("start_date 不能晚于 end_date")
+    announcement_years = set(range(start.year, end.year + 1))
+    return {year - 1 for year in announcement_years} if report_type == "annual" else announcement_years
+
+
+def report_text_matches(text: str, report_type: str, years: set[int]) -> bool:
+    """Match report references in archive summaries, not only exact announcement titles."""
+
+    normalized = re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", text))
+    patterns = {
+        "annual": r"{year}(?:年年度|年度)报告|{year}年报",
+        "q1": r"{year}年(?:第一季度报告|一季度报告|一季报)",
+        "q2": r"{year}年(?:半年度报告|半年报告|半年报)",
+        "q3": r"{year}年(?:第三季度报告|三季度报告|三季报)",
+    }
+    pattern = patterns.get(report_type)
+    return bool(pattern and any(re.search(pattern.format(year=year), normalized) for year in years))
+
+
+def _source_url_date(source_url: str) -> str | None:
+    match = re.search(r"/finalpage/(\d{4}-\d{2}-\d{2})/", source_url)
+    return match.group(1) if match else None
+
+
+def _url_in_window(source_url: str, start_date: str, end_date: str) -> bool:
+    source_date = _source_url_date(source_url)
+    return source_date is None or start_date <= source_date <= end_date
+
+
+def _staged_financial_report(
+    *,
+    task_id: str,
+    symbol: str,
+    report_type: str,
+    years: set[int],
+    source_url: str | None,
+) -> dict[str, Any] | None:
+    task_root = task_directory(task_id)
+    metadata_root = task_root / "working" / "collection-metadata"
+    if not metadata_root.is_dir():
+        return None
+    for metadata_path in sorted(metadata_root.glob("*.json")):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        raw_path = task_root / str(metadata.get("raw_path", ""))
+        if not raw_path.is_file() or raw_path.read_bytes()[:5] != PDF_MAGIC:
+            continue
+        known_urls = {str(metadata.get("url", "")), str(metadata.get("final_url", ""))}
+        financial = metadata.get("financial_report") if isinstance(metadata.get("financial_report"), dict) else {}
+        known_urls.add(str(financial.get("source_url", "")))
+        if source_url and source_url in known_urls:
+            return {
+                "location": "staging",
+                "match_basis": "source_url",
+                "raw_path": str(raw_path),
+                "metadata_path": str(metadata_path),
+                "source_urls": sorted(url for url in known_urls if url),
+            }
+        if source_url:
+            continue
+        stored_year = financial.get("period_year")
+        if (
+            str(financial.get("symbol", "")) == symbol
+            and str(financial.get("report_type", "")) == report_type
+            and isinstance(stored_year, int)
+            and stored_year in years
+        ):
+            return {
+                "location": "staging",
+                "match_basis": "financial_report_metadata",
+                "raw_path": str(raw_path),
+                "metadata_path": str(metadata_path),
+                "source_urls": sorted(url for url in known_urls if url),
+            }
+    return None
+
+
+def _archived_financial_report(
+    *,
+    company_name: str,
+    report_type: str,
+    years: set[int],
+    start_date: str,
+    end_date: str,
+    source_url: str | None,
+) -> dict[str, Any] | None:
+    records = [
+        record
+        for record in library.load_catalog()
+        if str(record.get("domain", "")) == "company"
+        and str(record.get("subject", "")) == company_name
+        and str(record.get("category", "")) in {"定期报告", "财务"}
+    ]
+    pdf_records = [record for record in records if str(record.get("extension", "")).lower() == "pdf"]
+    markdown_records = [record for record in records if str(record.get("extension", "")).lower() == "md"]
+
+    for record in sorted(markdown_records, key=lambda item: str(item.get("date", "")), reverse=True):
+        summary_path = library.record_path(record)
+        try:
+            summary = summary_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
+        except OSError:
+            continue
+        source_urls = library.source_urls_from_frontmatter(summary_path)
+        exact_url = bool(source_url and source_url in source_urls)
+        if source_url and not exact_url:
+            continue
+        if not exact_url and not report_text_matches(summary, report_type, years):
+            continue
+        if not exact_url and source_urls and not any(_url_in_window(url, start_date, end_date) for url in source_urls):
+            continue
+        parent = Path(str(record.get("path", ""))).parent
+        sibling_pdfs = [item for item in pdf_records if Path(str(item.get("path", ""))).parent == parent]
+        if exact_url:
+            source_stem = Path(urlparse(source_url or "").path).stem
+            exact_pdfs = [item for item in sibling_pdfs if source_stem and source_stem in Path(str(item.get("path", ""))).stem]
+            if exact_pdfs:
+                sibling_pdfs = exact_pdfs
+        else:
+            described_pdfs = [
+                item
+                for item in sibling_pdfs
+                if report_text_matches(f"{item.get('title', '')} {item.get('path', '')}", report_type, years)
+            ]
+            if described_pdfs:
+                sibling_pdfs = described_pdfs
+        pdf_paths = [str(library.record_path(item)) for item in sibling_pdfs]
+        if pdf_paths:
+            ambiguous = len(pdf_paths) > 1
+            return {
+                "location": "library",
+                "match_basis": (
+                    "source_url_ambiguous"
+                    if exact_url and ambiguous
+                    else "source_url"
+                    if exact_url
+                    else "company_report_bundle_ambiguous"
+                    if ambiguous
+                    else "company_report_bundle"
+                ),
+                "ambiguous": ambiguous,
+                "summary_path": str(summary_path),
+                "pdf_paths": pdf_paths,
+                "source_urls": source_urls,
+            }
+
+    if source_url:
+        return None
+    for record in sorted(pdf_records, key=lambda item: str(item.get("date", "")), reverse=True):
+        descriptor = f"{record.get('title', '')} {record.get('path', '')}"
+        if report_text_matches(descriptor, report_type, years):
+            return {
+                "location": "library",
+                "match_basis": "pdf_catalog_title",
+                "pdf_paths": [str(library.record_path(record))],
+                "source_urls": [],
+            }
+    return None
+
+
+def find_local_financial_report(
+    *,
+    task_id: str,
+    symbol: str,
+    company_name: str,
+    start_date: str,
+    end_date: str,
+    report_type: str,
+    source_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve a reusable report from task staging or the project archive without network access."""
+
+    years = report_period_years(start_date, end_date, report_type)
+    staged = _staged_financial_report(
+        task_id=task_id,
+        symbol=symbol,
+        report_type=report_type,
+        years=years,
+        source_url=source_url,
+    )
+    if staged:
+        return staged
+    return _archived_financial_report(
+        company_name=company_name,
+        report_type=report_type,
+        years=years,
+        start_date=start_date,
+        end_date=end_date,
+        source_url=source_url,
+    )
+
+
+def annotate_financial_report_metadata(
+    result: dict[str, Any],
+    *,
+    symbol: str,
+    company_name: str,
+    report_type: str,
+    start_date: str,
+    end_date: str,
+    report: dict[str, Any] | None = None,
+) -> None:
+    metadata_path = Path(str(result.get("metadata_path", "")))
+    if not metadata_path.is_file():
+        return
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    title = str((report or {}).get("title", ""))
+    title_year = re.search(r"(?<!\d)(\d{4})年", re.sub(r"<[^>]+>", "", title))
+    years = report_period_years(start_date, end_date, report_type)
+    period_year = int(title_year.group(1)) if title_year else next(iter(years)) if len(years) == 1 else None
+    metadata["financial_report"] = {
+        "symbol": symbol,
+        "company_name": company_name,
+        "report_type": report_type,
+        "period_year": period_year,
+        "announcement_id": (report or {}).get("announcement_id"),
+        "announcement_time": (report or {}).get("announcement_time"),
+        "announcement_title": title or None,
+        "source_url": str((report or {}).get("source_url") or result.get("final_url") or ""),
+        "search_start_date": start_date,
+        "search_end_date": end_date,
+    }
+    write_json(metadata_path, metadata)
+
+
 def cninfo_source_url(adjunct_url: str) -> str:
     """Normalize CNINFO's relative attachment path to its official static URL."""
 
@@ -220,7 +471,7 @@ def discover_cninfo_reports(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     opener: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
-    """Locate official CNINFO annual or first-quarter report PDFs without guessing an org ID."""
+    """Locate official CNINFO periodic report PDFs without guessing an org ID."""
 
     symbol = symbol.strip()
     company_name = company_name.strip()
@@ -250,8 +501,8 @@ def discover_cninfo_reports(
         "secid": "",
         "plate": cninfo_plate(symbol),
         # CNINFO's unfiltered result pages are dominated by routine announcements.
-        # Annual-report classification prevents the original report from falling beyond page one.
-        "category": "category_ndbg_szsh" if report_type == "annual" else "",
+        # Use the matching periodic-report category so quarterly filings stay within the page limit.
+        "category": CNINFO_REPORT_CATEGORIES.get(report_type, ""),
         "trade": "",
         "seDate": f"{start_date}~{end_date}",
         "sortName": "",
@@ -259,6 +510,7 @@ def discover_cninfo_reports(
         "isHLtitle": "true",
     }
     open_request = opener or urlopen
+    expected_years = report_period_years(start_date, end_date, report_type) if report_type != "all" else set()
     reports_by_id: dict[str, dict[str, Any]] = {}
     total_records: int | None = None
     pages_checked = 0
@@ -301,6 +553,9 @@ def discover_cninfo_reports(
             title = str(announcement.get("announcementTitle", ""))
             adjunct_url = str(announcement.get("adjunctUrl", "")).strip()
             if not adjunct_url or not cninfo_report_type_matches(title, report_type):
+                continue
+            title_year = report_title_year(title)
+            if expected_years and title_year not in expected_years:
                 continue
             announcement_id = str(announcement.get("announcementId", ""))
             reports_by_id[announcement_id] = {
@@ -527,8 +782,40 @@ def collect_financial_report(
 
     if report_type not in REPORT_TYPES[1:]:
         raise ValueError("collect-report 的 report_type 必须是 annual、q1、q2 或 q3")
+    load_writable_task(task_id, operation="查询或采集定期报告")
     attempts: list[dict[str, Any]] = []
+    generic_local = find_local_financial_report(
+        task_id=task_id,
+        symbol=symbol,
+        company_name=company_name,
+        start_date=start_date,
+        end_date=end_date,
+        report_type=report_type,
+    )
+    local = generic_local
     if primary_url:
+        exact_local = find_local_financial_report(
+            task_id=task_id,
+            symbol=symbol,
+            company_name=company_name,
+            start_date=start_date,
+            end_date=end_date,
+            report_type=report_type,
+            source_url=primary_url,
+        )
+        # A different explicit URL may be a revised filing. Preserve exact-URL
+        # semantics unless the generic result is an unresolved legacy bundle.
+        local = exact_local or (generic_local if generic_local and generic_local.get("ambiguous") else None)
+    if local and not local.get("ambiguous"):
+        return {
+            "status": "reused",
+            "source": local["location"],
+            "reason": "项目 data/research-library 已有匹配定期报告，未重复下载。",
+            "local_report": local,
+            "attempts": attempts,
+        }
+    ambiguous_local = local
+    if primary_url and not ambiguous_local:
         primary = collect_source(
             task_id=task_id,
             url=primary_url,
@@ -539,6 +826,14 @@ def collect_financial_report(
         )
         attempts.append(_collection_attempt("primary", primary_url, primary))
         if primary["status"] == "collected":
+            annotate_financial_report_metadata(
+                primary,
+                symbol=symbol,
+                company_name=company_name,
+                report_type=report_type,
+                start_date=start_date,
+                end_date=end_date,
+            )
             return {"status": "collected", "source": "primary", "result": primary, "attempts": attempts}
 
     discovery = discover_cninfo_reports(
@@ -557,10 +852,32 @@ def collect_financial_report(
             "reason": "CNInfo 未返回可验证的匹配定期报告；请使用公司官网、交易所公告页或浏览器定位公开原件。",
             "attempts": attempts,
             "cninfo_discovery": discovery,
+            "local_candidate": ambiguous_local,
         }
 
     for report in discovery["reports"]:
         source_url = str(report["source_url"])
+        local = find_local_financial_report(
+            task_id=task_id,
+            symbol=symbol,
+            company_name=company_name,
+            start_date=start_date,
+            end_date=end_date,
+            report_type=report_type,
+            source_url=source_url,
+        )
+        if local and not local.get("ambiguous"):
+            return {
+                "status": "reused",
+                "source": local["location"],
+                "reason": "CNInfo 匹配到的官方原件已在项目资料库中，未重复下载。",
+                "report": report,
+                "local_report": local,
+                "attempts": attempts,
+            }
+        if local and local.get("ambiguous"):
+            ambiguous_local = local
+            continue
         result = collect_source(
             task_id=task_id,
             url=source_url,
@@ -571,6 +888,15 @@ def collect_financial_report(
         )
         attempts.append(_collection_attempt("cninfo", source_url, result))
         if result["status"] == "collected":
+            annotate_financial_report_metadata(
+                result,
+                symbol=symbol,
+                company_name=company_name,
+                report_type=report_type,
+                start_date=start_date,
+                end_date=end_date,
+                report=report,
+            )
             return {
                 "status": "collected",
                 "source": "cninfo",
@@ -579,6 +905,15 @@ def collect_financial_report(
                 "attempts": attempts,
             }
 
+    if ambiguous_local:
+        return {
+            "status": "needs_source_resolution",
+            "reason": "项目资料库存在匹配摘要，但旧归档无法把目标报告与多个 PDF 一一对应；为避免重复下载，需先人工核对来源 URL 与附件。",
+            "attempts": attempts,
+            "cninfo_discovery": discovery,
+            "local_candidate": ambiguous_local,
+        }
+
     failure_types = {attempt.get("failure_type") for attempt in attempts}
     status = "needs_source_resolution" if "source_access_challenge" in failure_types else "failed"
     return {
@@ -586,6 +921,7 @@ def collect_financial_report(
         "reason": "已尝试显式来源与 CNInfo 官方原件，仍未获得有效 PDF。",
         "attempts": attempts,
         "cninfo_discovery": discovery,
+        "local_candidate": ambiguous_local,
     }
 
 
@@ -702,7 +1038,7 @@ def main() -> int:
             max_bytes=args.max_bytes,
         )
         print_json(result)
-        return 0 if result["status"] == "collected" else 2
+        return 0 if result["status"] in {"collected", "reused"} else 2
     print_json(render_pdf_pages(task_id=args.task, source_file=args.source_file, dpi=args.dpi))
     return 0
 

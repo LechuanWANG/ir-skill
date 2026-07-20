@@ -13,7 +13,9 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
+from portfolio_context import clean_holding_items as sanitize_holding_items
 from project_context import project_paths
 
 
@@ -49,6 +51,8 @@ TEXT_EXTENSIONS = {".md", ".txt", ".json", ".csv", ".html", ".htm", ".yaml", ".y
 CURATABLE_EXTENSIONS = TEXT_EXTENSIONS
 RETAINED_SOURCE_EXTENSIONS = {".pdf", ".xls", ".xlsx", ".parquet", ".zip"}
 BUILD_ARTIFACT_SUFFIXES = {".html", ".htm", ".tex", ".aux", ".log", ".out", ".fls", ".xdv", ".fdb_latexmk"}
+SYSTEM_METADATA_FILE_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini", "Icon\r"}
+SYSTEM_METADATA_DIRECTORIES = {"__MACOSX"}
 ARCHIVE_KIND = "source_markdown"
 MAX_SOURCE_TEXT_CHARS = 500_000
 PDF_RECOGNITION_VERSION = "agent-visual-v1"
@@ -71,10 +75,27 @@ RESEARCH_TASK_STATUSES = {"active", "blocked", "completed", "abandoned"}
 RESEARCH_TASK_TERMINAL_STATUSES = {"completed", "abandoned"}
 DEFAULT_RESEARCH_TASK_RETENTION_DAYS = 7
 FILES_INDEX_NAME = "INDEX.md"
+ARCHIVE_TIMEZONE = ZoneInfo("Asia/Hong_Kong")
 
 
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def current_archive_date() -> str:
+    """Return the local calendar date used to name newly archived artifacts."""
+
+    return datetime.now(ARCHIVE_TIMEZONE).date().isoformat()
+
+
+def is_system_metadata_file(path: Path) -> bool:
+    """Return whether a file is OS-generated metadata rather than research material."""
+
+    return path.name in SYSTEM_METADATA_FILE_NAMES or any(part in SYSTEM_METADATA_DIRECTORIES for part in path.parts)
+
+
+def is_research_file(path: Path) -> bool:
+    return path.is_file() and not is_system_metadata_file(path)
 
 
 def ensure_library() -> None:
@@ -179,7 +200,7 @@ def load_catalog() -> list[dict[str, Any]]:
         if not isinstance(record, dict):
             continue
         path = LIBRARY_ROOT / str(record.get("path", ""))
-        if path.is_file():
+        if is_research_file(path):
             existing.append(record)
     return existing
 
@@ -277,7 +298,7 @@ def report_context(path: Path) -> tuple[str, str, str]:
         domain = "other"
     subject = str(metadata.get("subject") or (parts[1] if len(parts) > 2 else default_subject))
     modified_at = datetime.fromtimestamp(path.stat().st_mtime)
-    report_date = str(metadata.get("as_of") or metadata.get("date") or date_from_text(path.name, modified_at))
+    report_date = str(metadata.get("archived_on") or date_from_text(path.name, modified_at))
     return domain, subject, report_date
 
 
@@ -293,6 +314,7 @@ def report_record_from_path(path: Path, *, origin: str | None = None) -> dict[st
         "subject": subject,
         "category": str(metadata.get("category") or "研究报告"),
         "date": report_date,
+        "as_of": metadata.get("as_of"),
         "kind": "report",
         "research_type": metadata.get("type", KIND_LABELS["report"]),
         "title": metadata.get("title", path.stem),
@@ -306,7 +328,7 @@ def report_record_from_path(path: Path, *, origin: str | None = None) -> dict[st
 def list_reports() -> list[dict[str, Any]]:
     if not REPORT_ROOT.is_dir():
         return []
-    reports = [report_record_from_path(path) for path in REPORT_ROOT.rglob("*") if path.is_file()]
+    reports = [report_record_from_path(path) for path in REPORT_ROOT.rglob("*") if is_research_file(path)]
     return sorted(reports, key=lambda record: str(record["updated_at"]), reverse=True)
 
 
@@ -491,24 +513,11 @@ def clean_profile_number(value: object) -> float | None:
 
 
 def clean_holding_items(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    holdings: list[dict[str, Any]] = []
-    for item in value[:200]:
-        if not isinstance(item, Mapping):
-            continue
-        holding = {
-            "symbol": clean_profile_text(item.get("symbol"), 32),
-            "name": clean_profile_text(item.get("name"), 80),
-            "quantity": clean_profile_number(item.get("quantity")),
-            "average_cost": clean_profile_number(item.get("average_cost")),
-            "latest_price": clean_profile_number(item.get("latest_price")),
-            "target_weight": clean_profile_number(item.get("target_weight")),
-            "notes": clean_profile_text(item.get("notes"), 600),
-        }
-        if any(value not in ("", None) for value in holding.values()):
-            holdings.append(holding)
-    return holdings
+    return sanitize_holding_items(
+        value,
+        default_as_of=datetime.now().astimezone().date().isoformat(),
+        default_source="ui",
+    )
 
 
 def clean_trade_items(value: object) -> list[dict[str, Any]]:
@@ -886,12 +895,20 @@ def curate_temporary_sources(*, apply: bool) -> dict[str, Any]:
         "retained_pdfs": 0,
         "low_reuse_query_artifacts": 0,
         "low_reuse_query_artifacts_removed": 0,
+        "system_metadata_files": 0,
+        "system_metadata_files_removed": 0,
         "build_artifacts": 0,
         "build_artifacts_removed": 0,
     }
     records_to_register: list[dict[str, Any]] = []
     for source_dir, domain, subject, date in temporary_source_groups():
-        sources = sorted(path for path in source_dir.iterdir() if path.is_file())
+        metadata_files = sorted(path for path in source_dir.iterdir() if path.is_file() and is_system_metadata_file(path))
+        summary["system_metadata_files"] += len(metadata_files)
+        if apply:
+            for path in metadata_files:
+                path.unlink()
+            summary["system_metadata_files_removed"] += len(metadata_files)
+        sources = sorted(path for path in source_dir.iterdir() if is_research_file(path))
         query_artifacts = [path for path in sources if is_low_reuse_query_artifact(path.stem, path.name)]
         reusable_sources = [path for path in sources if path not in query_artifacts]
         summary["low_reuse_query_artifacts"] += len(query_artifacts)
@@ -983,10 +1000,7 @@ def curate_temporary_sources(*, apply: bool) -> dict[str, Any]:
     summary["build_artifacts"] = cleanup_build_artifacts(apply=apply)
     if apply:
         summary["build_artifacts_removed"] = summary["build_artifacts"]
-        records = {str(record["path"]): record for record in load_catalog()}
-        for record in records_to_register:
-            records[str(record["path"])] = record
-        save_catalog(records.values())
+        register_catalog_records(records_to_register)
     return summary
 
 
@@ -1227,9 +1241,9 @@ def complete_research_task(task_id: str) -> dict[str, Any]:
     metadata = load_research_task(task_id)
     task_root = task_directory(metadata["task_id"])
     raw_root = task_root / "raw"
-    raw_sources = [path for path in raw_root.rglob("*") if path.is_file()] if raw_root.is_dir() else []
+    raw_sources = [path for path in raw_root.rglob("*") if is_research_file(path)] if raw_root.is_dir() else []
     archive = archive_staged_task(metadata["task_id"], apply=True) if raw_sources else None
-    remaining_raw_sources = [path for path in raw_root.rglob("*") if path.is_file()] if raw_root.is_dir() else []
+    remaining_raw_sources = [path for path in raw_root.rglob("*") if is_research_file(path)] if raw_root.is_dir() else []
     if remaining_raw_sources:
         remaining = ", ".join(sorted(str(path.relative_to(task_root)) for path in remaining_raw_sources))
         raise RuntimeError(f"任务 {metadata['task_id']} 仍有未归档原始资料，不能完成：{remaining}")
@@ -1332,7 +1346,7 @@ def document_destination(document: Mapping[str, Any]) -> Path:
         subject=str(document["subject"]),
         category=str(document["category"]),
         title=str(document["title"]),
-        date=str(document["date"]),
+        date=str(document["archived_on"]),
         suffix=".md",
     )
 
@@ -1351,7 +1365,8 @@ def render_reusable_document(
         "domain": str(document["domain"]),
         "subject": str(document["subject"]),
         "category": str(document["category"]),
-        "as_of": str(document["date"]),
+        "as_of": str(document["as_of"]),
+        "archived_on": str(document["archived_on"]),
         "source_task": str(document["task"]),
         "source_entries": ",".join(source_entries),
         "source_paths": " | ".join(source_paths),
@@ -1384,7 +1399,10 @@ def merge_reusable_document(
             existing_body = remove_frontmatter(destination.read_text(encoding="utf-8", errors="replace")).strip()
         except OSError:
             existing_body = ""
-        body = f"{existing_body}\n\n---\n\n## {document['date']} 补充资料\n\n{content}"
+        body = (
+            f"{existing_body}\n\n---\n\n"
+            f"## {document['as_of']} 市场时点资料（{document['archived_on']} 归档）\n\n{content}"
+        )
     else:
         body = content
     entries = [*existing_entries, *additions]
@@ -1462,13 +1480,22 @@ def normalized_plan_document(task_id: str, value: object) -> dict[str, Any]:
         if not source_file.startswith("raw/") or not method or not evidence or status != "verified":
             raise ValueError("PDF 核验记录需要 raw/ 下的 source_file、method、evidence 和 status=verified")
         pdf_validations.append({"source_file": source_file, "method": method[:120], "evidence": evidence[:500], "status": status})
+    as_of = archive_date(value.get("as_of") or value.get("date"))
+    current_date = current_archive_date()
+    archived_on = archive_date(value.get("archived_on") or current_date)
+    if archived_on != current_date:
+        raise ValueError("archived_on 必须是执行归档当天（香港时区），不能使用市场 as_of 或历史日期")
     return {
         "task": task_id,
         "domain": domain,
         "subject": subject[:120],
         "category": category[:120],
         "title": title[:180],
-        "date": archive_date(value.get("as_of") or value.get("date")),
+        # Keep the research time boundary and the storage date separate.  The
+        # latter alone controls paths and catalog ordering for new archives.
+        "as_of": as_of,
+        "archived_on": archived_on,
+        "date": archived_on,
         "content": content[:1_000_000],
         "source_files": source_files,
         "source_urls": source_urls,
@@ -1529,7 +1556,7 @@ def attachment_destination(document: Mapping[str, Any], source: Path) -> Path:
         subject=str(document["subject"]),
         category=str(document["category"]),
         title=source.stem,
-        date=str(document["date"]),
+        date=str(document["archived_on"]),
         suffix=source.suffix.lower(),
     )
 
@@ -1558,11 +1585,22 @@ def prune_empty_directories(path: Path) -> None:
             continue
 
 
-def archive_staged_task(task_id: str, *, apply: bool) -> dict[str, Any]:
-    """Archive or discard every raw task source according to an Agent-authored plan."""
+def register_catalog_records(records_to_register: Iterable[Mapping[str, Any]]) -> None:
+    """Merge generated catalog records and rebuild the agent-facing index once."""
 
-    ensure_library()
-    task_root, documents, discards = load_task_archive_plan(task_id)
+    records = {str(record["path"]): record for record in load_catalog()}
+    for record in records_to_register:
+        records[str(record["path"])] = dict(record)
+    save_catalog(records.values())
+
+
+def validated_archive_sources(
+    task_root: Path,
+    documents: list[dict[str, Any]],
+    discards: list[dict[str, Any]],
+) -> tuple[list[tuple[dict[str, Any], list[Path]]], set[Path], Path]:
+    """Resolve an archive plan and prove it covers every raw research file."""
+
     low_reuse_documents = [
         document
         for document in documents
@@ -1575,39 +1613,51 @@ def archive_staged_task(task_id: str, *, apply: bool) -> dict[str, Any]:
     if low_reuse_documents:
         titles = ", ".join(str(document.get("title") or "未命名查询") for document in low_reuse_documents)
         raise ValueError(f"日常市场查询结果不写入 data/research-library/files/：{titles}。请保留 SQLite 记录或在归档计划中丢弃临时文件。")
+
     resolved_task_root = task_root.resolve()
-    summary = {
-        "task": task_id,
-        "apply": apply,
-        "documents": len(documents),
-        "documents_created_or_merged": 0,
-        "discarded_files": len(discards),
-        "discarded_files_removed": 0,
-        "attachments_retained": 0,
-        "pdf_sources_archived": 0,
-        "temporary_text_files": 0,
-        "temporary_text_files_removed": 0,
-        "task_cleared": False,
-    }
-    records_to_register: list[dict[str, Any]] = []
-    referenced_raw: set[Path] = set()
-    attachment_sources: dict[Path, dict[str, Any]] = {}
-    document_sources = [(document, [raw_staging_path(task_root, relative) for relative in document["source_files"]]) for document in documents]
+    document_sources = [
+        (document, [raw_staging_path(task_root, relative) for relative in document["source_files"]])
+        for document in documents
+    ]
     discarded_sources = {raw_staging_path(task_root, item["source_file"]) for item in discards}
     planned_sources = [source for _, sources in document_sources for source in sources] + list(discarded_sources)
     missing = [str(path.relative_to(resolved_task_root)) for path in planned_sources if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"归档计划引用的来源不存在：{', '.join(sorted(set(missing)))}")
+
     raw_root = (task_root / "raw").resolve()
-    raw_sources = {path.resolve() for path in raw_root.rglob("*") if path.is_file()} if raw_root.is_dir() else set()
-    planned_raw_sources = {path.resolve() for path in planned_sources}
-    uncovered = sorted(str(path.relative_to(resolved_task_root)) for path in raw_sources - planned_raw_sources)
+    raw_sources = {path.resolve() for path in raw_root.rglob("*") if is_research_file(path)} if raw_root.is_dir() else set()
+    uncovered = sorted(
+        str(path.relative_to(resolved_task_root))
+        for path in raw_sources - {path.resolve() for path in planned_sources}
+    )
     if uncovered:
         raise ValueError(f"archive-plan.json 必须覆盖 raw/ 下所有文件；请归档或明确丢弃：{', '.join(uncovered)}")
+    return document_sources, discarded_sources, raw_root
+
+
+def merge_archive_documents(
+    *,
+    task_id: str,
+    task_root: Path,
+    document_sources: Iterable[tuple[dict[str, Any], list[Path]]],
+    apply: bool,
+    summary: dict[str, Any],
+    records_to_register: list[dict[str, Any]],
+) -> tuple[set[Path], dict[Path, dict[str, Any]]]:
+    """Create reusable documents and identify source files requiring retention."""
+
+    resolved_task_root = task_root.resolve()
+    referenced_raw: set[Path] = set()
+    attachment_sources: dict[Path, dict[str, Any]] = {}
     for document, source_paths in document_sources:
         source_entries = [source_entry_id(path) for path in source_paths]
         source_entries.append(hashlib.sha256(document["content"].encode("utf-8")).hexdigest()[:20])
-        source_urls = list(dict.fromkeys([*(document.get("source_urls") or []), *source_urls_from_collection_metadata(task_root, source_paths)]))
+        source_urls = list(
+            dict.fromkeys(
+                [*(document.get("source_urls") or []), *source_urls_from_collection_metadata(task_root, source_paths)]
+            )
+        )
         destination, changed = merge_reusable_document(
             document,
             source_entries=source_entries,
@@ -1623,7 +1673,7 @@ def archive_staged_task(task_id: str, *, apply: bool) -> dict[str, Any]:
                     destination,
                     domain=document["domain"],
                     subject=document["subject"],
-                    date=document["date"],
+                    date=document["archived_on"],
                     kind=ARCHIVE_KIND,
                     title=document["title"],
                     origin=f"staging/{task_id}",
@@ -1633,60 +1683,119 @@ def archive_staged_task(task_id: str, *, apply: bool) -> dict[str, Any]:
             referenced_raw.add(source)
             if source.suffix.lower() not in CURATABLE_EXTENSIONS:
                 attachment_sources.setdefault(source, document)
+    return referenced_raw, attachment_sources
+
+
+def apply_archive_file_operations(
+    *,
+    task_id: str,
+    task_root: Path,
+    discarded_sources: Iterable[Path],
+    temporary_text: Iterable[Path],
+    referenced_raw: set[Path],
+    attachment_sources: Mapping[Path, Mapping[str, Any]],
+    summary: dict[str, Any],
+    records_to_register: list[dict[str, Any]],
+) -> None:
+    """Move retained attachments, remove planned intermediates, and clear completed staging."""
+
+    for source, document in attachment_sources.items():
+        destination = attachment_destination(document, source)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if file_digest(destination) == file_digest(source):
+                source.unlink()
+            else:
+                destination = destination.with_name(f"{destination.stem}-{file_digest(source)[:8]}{destination.suffix}")
+                shutil.move(str(source), str(destination))
+        else:
+            shutil.move(str(source), str(destination))
+        records_to_register.append(
+            record_from_path(
+                destination,
+                domain=document["domain"],
+                subject=document["subject"],
+                date=document["archived_on"],
+                kind="temporary_source",
+                title=destination.stem,
+                origin=f"staging/{task_id}",
+            )
+        )
+        summary["attachments_retained"] += 1
+        if source.suffix.lower() == ".pdf":
+            summary["pdf_sources_archived"] += 1
+    for source in discarded_sources:
+        if source.exists():
+            source.unlink()
+            summary["discarded_files_removed"] += 1
+    for source in temporary_text:
+        if source in referenced_raw and source.exists():
+            source.unlink()
+            summary["temporary_text_files_removed"] += 1
+
+    prune_empty_directories(task_root)
+    raw_root = task_root / "raw"
+    if task_root.is_dir() and not any(task_root.rglob("*")):
+        task_root.rmdir()
+        summary["task_cleared"] = True
+    elif task_root.is_dir() and (not raw_root.is_dir() or not any(raw_root.rglob("*"))):
+        plan_path = task_root / "archive-plan.json"
+        if plan_path.is_file():
+            plan_path.unlink()
+        prune_empty_directories(task_root)
+        if task_root.is_dir() and not any(task_root.rglob("*")):
+            task_root.rmdir()
+            summary["task_cleared"] = True
+
+
+def archive_staged_task(task_id: str, *, apply: bool) -> dict[str, Any]:
+    """Archive or discard every raw task source according to an Agent-authored plan."""
+
+    ensure_library()
+    task_root, documents, discards = load_task_archive_plan(task_id)
+    summary = {
+        "task": task_id,
+        "apply": apply,
+        "documents": len(documents),
+        "documents_created_or_merged": 0,
+        "discarded_files": len(discards),
+        "discarded_files_removed": 0,
+        "attachments_retained": 0,
+        "pdf_sources_archived": 0,
+        "temporary_text_files": 0,
+        "temporary_text_files_removed": 0,
+        "task_cleared": False,
+    }
+    records_to_register: list[dict[str, Any]] = []
+    document_sources, discarded_sources, raw_root = validated_archive_sources(
+        task_root,
+        documents,
+        discards,
+    )
+    referenced_raw, attachment_sources = merge_archive_documents(
+        task_id=task_id,
+        task_root=task_root,
+        document_sources=document_sources,
+        apply=apply,
+        summary=summary,
+        records_to_register=records_to_register,
+    )
     temporary_text = [path for path in raw_root.rglob("*") if path.is_file() and path.suffix.lower() in CURATABLE_EXTENSIONS]
     summary["temporary_text_files"] = sum(path in referenced_raw for path in temporary_text)
     summary["pdf_sources_removed_after_verified_conversion"] = 0
     summary["pdf_sources_retained_for_review"] = sum(source.suffix.lower() == ".pdf" for source in attachment_sources)
     if apply:
-        for source, document in attachment_sources.items():
-            destination = attachment_destination(document, source)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if destination.exists():
-                if file_digest(destination) == file_digest(source):
-                    source.unlink()
-                else:
-                    destination = destination.with_name(f"{destination.stem}-{file_digest(source)[:8]}{destination.suffix}")
-                    shutil.move(str(source), str(destination))
-            else:
-                shutil.move(str(source), str(destination))
-            records_to_register.append(
-                record_from_path(
-                    destination,
-                    domain=document["domain"],
-                    subject=document["subject"],
-                    date=document["date"],
-                    kind="temporary_source",
-                    title=destination.stem,
-                    origin=f"staging/{task_id}",
-                )
-            )
-            summary["attachments_retained"] += 1
-            if source.suffix.lower() == ".pdf":
-                summary["pdf_sources_archived"] += 1
-        for source in discarded_sources:
-            if source.exists():
-                source.unlink()
-                summary["discarded_files_removed"] += 1
-        for source in temporary_text:
-            if source in referenced_raw and source.exists():
-                source.unlink()
-                summary["temporary_text_files_removed"] += 1
-        prune_empty_directories(task_root)
-        if task_root.is_dir() and not any(task_root.rglob("*")):
-            task_root.rmdir()
-            summary["task_cleared"] = True
-        elif task_root.is_dir() and not any((task_root / "raw").rglob("*")):
-            plan_path = task_root / "archive-plan.json"
-            if plan_path.is_file():
-                plan_path.unlink()
-            prune_empty_directories(task_root)
-            if task_root.is_dir() and not any(task_root.rglob("*")):
-                task_root.rmdir()
-                summary["task_cleared"] = True
-        records = {str(record["path"]): record for record in load_catalog()}
-        for record in records_to_register:
-            records[str(record["path"])] = record
-        save_catalog(records.values())
+        apply_archive_file_operations(
+            task_id=task_id,
+            task_root=task_root,
+            discarded_sources=discarded_sources,
+            temporary_text=temporary_text,
+            referenced_raw=referenced_raw,
+            attachment_sources=attachment_sources,
+            summary=summary,
+            records_to_register=records_to_register,
+        )
+        register_catalog_records(records_to_register)
     return summary
 
 
@@ -1740,7 +1849,7 @@ def refresh_pdf_text_archives(*, apply: bool) -> dict[str, Any]:
                     markdown_archive,
                     domain=metadata.get("domain", "other"),
                     subject=metadata.get("subject", "未分类"),
-                    date=metadata.get("as_of") or datetime.fromtimestamp(pdf_source.stat().st_mtime).astimezone().strftime("%Y-%m-%d"),
+                    date=metadata.get("archived_on") or datetime.fromtimestamp(pdf_source.stat().st_mtime).astimezone().strftime("%Y-%m-%d"),
                     kind=ARCHIVE_KIND,
                     title=metadata.get("title", markdown_archive.stem),
                     origin="pdf-layout-safe-refresh",
@@ -1748,10 +1857,7 @@ def refresh_pdf_text_archives(*, apply: bool) -> dict[str, Any]:
             )
         summary["archives_refreshed"] += 1
     if apply and records_to_refresh:
-        records = {str(record["path"]): record for record in load_catalog()}
-        for record in records_to_refresh:
-            records[str(record["path"])] = record
-        save_catalog(records.values())
+        register_catalog_records(records_to_refresh)
     return summary
 
 
@@ -1844,10 +1950,7 @@ def migrate_legacy_layout(*, apply: bool) -> dict[str, Any]:
     if apply:
         summary["script_artifacts_removed"] = summary["script_artifacts"]
         prune_empty_directories(LIBRARY_FILES)
-        records = {str(record["path"]): record for record in load_catalog()}
-        for record in records_to_register:
-            records[str(record["path"])] = record
-        save_catalog(records.values())
+        register_catalog_records(records_to_register)
     summary["report_migration"] = migrate_report_storage(apply=apply)
     summary["low_reuse_query_cleanup"] = cleanup_low_reuse_query_artifacts(apply=apply)
     return summary
@@ -1867,7 +1970,7 @@ def legacy_items() -> list[dict[str, Any]]:
     raw_root = WIKI_ROOT / "raw"
     if raw_root.is_dir():
         for path in raw_root.rglob("*"):
-            if not path.is_file():
+            if not is_research_file(path):
                 continue
             relative_parts = path.relative_to(raw_root).parts
             if len(relative_parts) < 4:
@@ -1906,7 +2009,7 @@ def legacy_items() -> list[dict[str, Any]]:
                     "source": path,
                     "domain": domain,
                     "subject": subject,
-                    "date": metadata.get("as_of") or date_from_text(path.name, modified_at),
+                    "date": metadata.get("archived_on") or date_from_text(path.name, modified_at),
                     "kind": kind,
                     "origin": origin,
                 }

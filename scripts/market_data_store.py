@@ -7,13 +7,20 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from market_data_migrations import (
+    MarketDataTableNames,
+    apply_market_data_migrations,
+    backup_database_before_migration,
+    pending_market_data_migrations,
+)
 from project_context import project_paths
 
 
@@ -35,6 +42,37 @@ INDEX_WEIGHT_TABLE = "market_index_weight"
 MARKET_DAILY_INFO_TABLE = "market_daily_info"
 MARKET_MONEYFLOW_TABLE = "market_moneyflow"
 MARKET_MARGIN_TABLE = "market_margin"
+MARKET_FLOW_DAILY_TABLE = "market_flow_daily"
+LIMIT_EVENT_DAILY_TABLE = "limit_event_daily"
+SECTOR_MASTER_TABLE = "market_sector_master"
+SECTOR_DAILY_TABLE = "market_sector_daily"
+SECTOR_FLOW_DAILY_TABLE = "market_sector_flow_daily"
+SECTOR_MEMBERSHIP_TABLE = "sector_membership_daily"
+CHIP_DISTRIBUTION_TABLE = "chip_distribution_daily"
+FACTOR_DAILY_TABLE = "factor_daily"
+INSTITUTIONAL_RESEARCH_TABLE = "institutional_research"
+CORPORATE_EVENTS_TABLE = "corporate_events"
+NORMALIZED_ENDPOINT_DATE_TABLES = {
+    "daily": DAILY_TABLE,
+    "daily_basic": DAILY_BASIC_TABLE,
+    "index_daily": INDEX_DAILY_TABLE,
+    "moneyflow": MARKET_FLOW_DAILY_TABLE,
+}
+SECTOR_MASTER_ENDPOINT_PROVIDERS = {
+    "ths_index": "ths",
+    "dc_index": "dc",
+    "tdx_index": "tdx",
+}
+SECTOR_DAILY_ENDPOINT_PROVIDERS = {
+    "ths_daily": "ths",
+    "dc_daily": "dc",
+    "tdx_daily": "tdx",
+}
+SECTOR_MEMBER_ENDPOINT_PROVIDERS = {
+    "ths_member": "ths",
+    "dc_member": "dc",
+    "tdx_member": "tdx",
+}
 
 RESEARCH_IDENTITY_FIELDS = (
     "ts_code",
@@ -158,6 +196,28 @@ MARKET_MARGIN_NUMERIC_FIELDS = [
     "rqyl",
 ]
 
+SECTOR_DAILY_NUMERIC_FIELDS = [
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "change",
+    "pct_chg",
+    "vol",
+    "amount",
+    "turnover_rate",
+]
+
+SECTOR_FLOW_NUMERIC_FIELDS = [
+    "pct_chg",
+    "company_num",
+    "lead_stock_pct_chg",
+    "net_buy_amount",
+    "net_sell_amount",
+    "net_amount",
+]
+
 
 def normalize_trade_date(value: object) -> str:
     text = str(value).strip()
@@ -214,6 +274,8 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             trade_date TEXT NOT NULL,
             ts_code TEXT NOT NULL,
             close_qfq REAL,
+            high_qfq REAL,
+            low_qfq REAL,
             volume REAL,
             source TEXT NOT NULL,
             retrieved_at TEXT NOT NULL,
@@ -221,6 +283,13 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    daily_columns = {
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({DAILY_TABLE})")
+    }
+    for column in ("high_qfq", "low_qfq"):
+        if column not in daily_columns:
+            connection.execute(f"ALTER TABLE {DAILY_TABLE} ADD COLUMN {column} REAL")
     connection.execute(
         f"""
         CREATE INDEX IF NOT EXISTS idx_{DAILY_TABLE}_ts_code_date
@@ -466,6 +535,98 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     )
     connection.execute(
         f"""
+        CREATE TABLE IF NOT EXISTS {MARKET_FLOW_DAILY_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            net_mf_amount REAL,
+            buy_elg_amount REAL,
+            buy_lg_amount REAL,
+            buy_md_amount REAL,
+            buy_sm_amount REAL,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {LIMIT_EVENT_DAILY_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            name TEXT,
+            limit_type TEXT,
+            pct_chg REAL,
+            amount REAL,
+            first_time TEXT,
+            last_time TEXT,
+            open_times REAL,
+            up_stat TEXT,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date, limit_type)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {CHIP_DISTRIBUTION_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            price REAL,
+            percent REAL,
+            vol REAL,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date, price)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {FACTOR_DAILY_TABLE} (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INSTITUTIONAL_RESEARCH_TABLE} (
+            ts_code TEXT NOT NULL,
+            surv_date TEXT NOT NULL,
+            org_name TEXT,
+            ann_date TEXT,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, surv_date, org_name)
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {CORPORATE_EVENTS_TABLE} (
+            dataset TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            event_key TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            PRIMARY KEY (dataset, ts_code, event_date, event_key)
+        )
+        """
+    )
+    connection.execute(
+        f"""
         CREATE INDEX IF NOT EXISTS idx_{INDEX_MEMBER_TABLE}_con_code
         ON {INDEX_MEMBER_TABLE} (con_code, in_date, out_date)
         """
@@ -538,14 +699,35 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    apply_market_data_migrations(
+        connection,
+        tables=MarketDataTableNames(
+            sector_master=SECTOR_MASTER_TABLE,
+            sector_daily=SECTOR_DAILY_TABLE,
+            sector_flow_daily=SECTOR_FLOW_DAILY_TABLE,
+            sector_membership=SECTOR_MEMBERSHIP_TABLE,
+        ),
+    )
 
 
 def ensure_database(db_path: Path = DEFAULT_DB_PATH) -> Path:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(db_path)) as connection:
-        ensure_schema(connection)
-        connection.commit()
+    backup_path: Path | None = None
+    if db_path.is_file():
+        with closing(sqlite3.connect(db_path)) as connection:
+            if pending_market_data_migrations(connection):
+                backup_path = backup_database_before_migration(db_path)
+    try:
+        with closing(sqlite3.connect(db_path)) as connection:
+            ensure_schema(connection)
+            connection.commit()
+    except (OSError, RuntimeError, sqlite3.Error) as error:
+        if backup_path is not None:
+            raise RuntimeError(
+                f"SQLite 迁移失败；原数据库备份保留在 {backup_path}。"
+            ) from error
+        raise
     return db_path
 
 
@@ -906,6 +1088,107 @@ def load_research_observations(
     return pd.DataFrame(expanded)
 
 
+def load_research_observation_dates(
+    dataset: str,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    symbols: Sequence[str] | None = None,
+) -> set[str]:
+    """Return current cached observation dates for one dataset.
+
+    This lightweight query is intentionally narrower than
+    :func:`load_research_observations`: callers that only need to decide
+    whether a network refresh is required should not deserialize every raw
+    payload stored in SQLite.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return set()
+
+    where = ["dataset = ?", "is_current = 1", "event_date IS NOT NULL", "event_date <> ''"]
+    params: list[object] = [dataset]
+    if symbols:
+        clean_symbols = [str(symbol) for symbol in symbols if symbol]
+        if clean_symbols:
+            placeholders = ", ".join("?" for _ in clean_symbols)
+            where.append(f"ts_code IN ({placeholders})")
+            params.extend(clean_symbols)
+
+    query = f"""
+        SELECT DISTINCT event_date
+        FROM {RESEARCH_OBSERVATION_TABLE}
+        WHERE {' AND '.join(where)}
+    """
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        rows = connection.execute(query, params).fetchall()
+
+    dates: set[str] = set()
+    for (value,) in rows:
+        try:
+            dates.add(normalize_trade_date(value))
+        except (TypeError, ValueError):
+            continue
+    return dates
+
+
+def load_normalized_endpoint_dates(
+    endpoint: str,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    symbols: Sequence[str] | None = None,
+) -> set[str]:
+    """Return stored dates from normalized core-market tables for one endpoint."""
+    table = NORMALIZED_ENDPOINT_DATE_TABLES.get(endpoint)
+    db_path = Path(db_path)
+    if table is None or not db_path.exists():
+        return set()
+
+    where = ["trade_date IS NOT NULL", "trade_date <> ''"]
+    params: list[object] = []
+    if symbols:
+        clean_symbols = [str(symbol) for symbol in symbols if symbol]
+        if clean_symbols:
+            placeholders = ", ".join("?" for _ in clean_symbols)
+            where.append(f"ts_code IN ({placeholders})")
+            params.extend(clean_symbols)
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        rows = connection.execute(
+            f"SELECT DISTINCT trade_date FROM {table} WHERE {' AND '.join(where)}",
+            params,
+        ).fetchall()
+    return {normalize_trade_date(value) for (value,) in rows}
+
+
+def load_trading_calendar(
+    *,
+    start_date: str,
+    end_date: str,
+    exchange: str = "SSE",
+    db_path: Path = DEFAULT_DB_PATH,
+) -> pd.DataFrame:
+    """Load a local exchange calendar without triggering a network request."""
+    columns = ["exchange", "cal_date", "is_open", "pretrade_date"]
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return pd.DataFrame(columns=columns)
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        return pd.read_sql_query(
+            f"""
+            SELECT exchange, cal_date, is_open, pretrade_date
+            FROM {TRADING_CALENDAR_TABLE}
+            WHERE exchange = ? AND cal_date >= ? AND cal_date <= ?
+            ORDER BY cal_date
+            """,
+            connection,
+            params=(exchange, normalize_trade_date(start_date), normalize_trade_date(end_date)),
+        )
+
+
 def write_tushare_capabilities(
     records: Sequence[Mapping[str, object]],
     *,
@@ -972,14 +1255,26 @@ def write_daily_market_data(
     prices: pd.DataFrame,
     volumes: pd.DataFrame,
     *,
+    high_prices: pd.DataFrame | None = None,
+    low_prices: pd.DataFrame | None = None,
     db_path: Path = DEFAULT_DB_PATH,
     source: str = "tushare",
     retrieved_at: str | None = None,
 ) -> int:
-    """Upsert forward-adjusted prices and volumes into the local SQLite store."""
+    """Upsert forward-adjusted daily close, high, low, and volume into SQLite."""
     price_rows = _matrix_to_long(prices, "close_qfq")
     volume_rows = _matrix_to_long(volumes, "volume")
     daily = price_rows.merge(volume_rows, on=["trade_date", "ts_code"], how="outer")
+    if high_prices is not None:
+        high_rows = _matrix_to_long(high_prices, "high_qfq")
+        daily = daily.merge(high_rows, on=["trade_date", "ts_code"], how="outer")
+    else:
+        daily["high_qfq"] = None
+    if low_prices is not None:
+        low_rows = _matrix_to_long(low_prices, "low_qfq")
+        daily = daily.merge(low_rows, on=["trade_date", "ts_code"], how="outer")
+    else:
+        daily["low_qfq"] = None
     if daily.empty:
         ensure_database(db_path)
         return 0
@@ -990,6 +1285,8 @@ def write_daily_market_data(
             normalize_trade_date(row.trade_date),
             str(row.ts_code),
             _float_or_none(row.close_qfq),
+            _float_or_none(row.high_qfq),
+            _float_or_none(row.low_qfq),
             _float_or_none(row.volume),
             source,
             timestamp,
@@ -1003,10 +1300,12 @@ def write_daily_market_data(
         connection.executemany(
             f"""
             INSERT INTO {DAILY_TABLE}
-                (trade_date, ts_code, close_qfq, volume, source, retrieved_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (trade_date, ts_code, close_qfq, high_qfq, low_qfq, volume, source, retrieved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(trade_date, ts_code) DO UPDATE SET
                 close_qfq = excluded.close_qfq,
+                high_qfq = COALESCE(excluded.high_qfq, {DAILY_TABLE}.high_qfq),
+                low_qfq = COALESCE(excluded.low_qfq, {DAILY_TABLE}.low_qfq),
                 volume = excluded.volume,
                 source = excluded.source,
                 retrieved_at = excluded.retrieved_at
@@ -1418,6 +1717,291 @@ def write_market_margin(
     )
 
 
+def _payload_records(frame: pd.DataFrame) -> list[dict[str, object]]:
+    return [
+        {str(key): _json_value(value) for key, value in row.items()}
+        for row in frame.to_dict(orient="records")
+    ]
+
+
+def _write_payload_table(
+    table: str,
+    frame: pd.DataFrame,
+    *,
+    key_columns: Sequence[str],
+    columns: Sequence[str],
+    numeric_columns: Sequence[str] = (),
+    date_columns: Sequence[str] = (),
+    db_path: Path = DEFAULT_DB_PATH,
+    source: str = "tushare",
+    retrieved_at: str | None = None,
+) -> int:
+    if frame.empty:
+        ensure_database(db_path)
+        return 0
+    timestamp = _timestamp(retrieved_at)
+    numeric_fields = set(numeric_columns)
+    date_fields = set(date_columns)
+    records: list[tuple[object, ...]] = []
+    for payload in _payload_records(frame):
+        values: list[object] = []
+        for column in columns:
+            value = payload.get(column)
+            if column in date_fields:
+                value = _normalize_optional_date(value)
+            elif column in numeric_fields:
+                value = _float_or_none(value)
+            else:
+                value = _text_or_none(value)
+            values.append(value)
+        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        values.extend((payload_json, source, timestamp))
+        records.append(tuple(values))
+    all_columns = [*columns, "payload_json", "source", "retrieved_at"]
+    assignments = ", ".join(
+        [f"{column} = COALESCE(excluded.{column}, {column})" for column in columns if column not in key_columns]
+        + ["payload_json = excluded.payload_json", "source = excluded.source", "retrieved_at = excluded.retrieved_at"]
+    )
+    placeholders = ", ".join("?" for _ in all_columns)
+    db_path = ensure_database(db_path)
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        connection.executemany(
+            f"""
+            INSERT INTO {table} ({", ".join(all_columns)})
+            VALUES ({placeholders})
+            ON CONFLICT({", ".join(key_columns)}) DO UPDATE SET {assignments}
+            """,
+            records,
+        )
+        connection.commit()
+    return len(records)
+
+
+def write_market_flow_daily(frame: pd.DataFrame, **kwargs: object) -> int:
+    return _write_payload_table(
+        MARKET_FLOW_DAILY_TABLE,
+        frame,
+        key_columns=["ts_code", "trade_date"],
+        columns=["ts_code", "trade_date", "net_mf_amount", "buy_elg_amount", "buy_lg_amount", "buy_md_amount", "buy_sm_amount"],
+        numeric_columns=["net_mf_amount", "buy_elg_amount", "buy_lg_amount", "buy_md_amount", "buy_sm_amount"],
+        date_columns=["trade_date"],
+        **kwargs,
+    )
+
+
+def write_limit_events(frame: pd.DataFrame, **kwargs: object) -> int:
+    frame = frame.copy()
+    if "limit_type" not in frame.columns:
+        frame["limit_type"] = ""
+    else:
+        frame["limit_type"] = frame["limit_type"].fillna("").astype(str)
+    return _write_payload_table(
+        LIMIT_EVENT_DAILY_TABLE,
+        frame,
+        key_columns=["ts_code", "trade_date", "limit_type"],
+        columns=["ts_code", "trade_date", "name", "limit_type", "pct_chg", "amount", "first_time", "last_time", "open_times", "up_stat"],
+        numeric_columns=["pct_chg", "amount", "open_times"],
+        date_columns=["trade_date"],
+        **kwargs,
+    )
+
+
+def write_sector_master(provider: str, frame: pd.DataFrame, **kwargs: object) -> int:
+    from market_data_sector import write_sector_master as implementation
+
+    return implementation(provider, frame, **kwargs)
+
+
+def write_sector_daily(provider: str, frame: pd.DataFrame, **kwargs: object) -> int:
+    from market_data_sector import write_sector_daily as implementation
+
+    return implementation(provider, frame, **kwargs)
+
+
+def write_sector_flow_daily(provider: str, frame: pd.DataFrame, **kwargs: object) -> int:
+    from market_data_sector import write_sector_flow_daily as implementation
+
+    return implementation(provider, frame, **kwargs)
+
+
+def write_sector_membership(dataset: str, frame: pd.DataFrame, **kwargs: object) -> int:
+    from market_data_sector import write_sector_membership as implementation
+
+    return implementation(dataset, frame, **kwargs)
+
+
+def write_chip_distribution(frame: pd.DataFrame, **kwargs: object) -> int:
+    return _write_payload_table(
+        CHIP_DISTRIBUTION_TABLE,
+        frame,
+        key_columns=["ts_code", "trade_date", "price"],
+        columns=["ts_code", "trade_date", "price", "percent", "vol"],
+        numeric_columns=["price", "percent", "vol"],
+        date_columns=["trade_date"],
+        **kwargs,
+    )
+
+
+def write_factor_daily(frame: pd.DataFrame, **kwargs: object) -> int:
+    return _write_payload_table(
+        FACTOR_DAILY_TABLE,
+        frame,
+        key_columns=["ts_code", "trade_date"],
+        columns=["ts_code", "trade_date"],
+        date_columns=["trade_date"],
+        **kwargs,
+    )
+
+
+def write_institutional_research(frame: pd.DataFrame, **kwargs: object) -> int:
+    frame = frame.copy()
+    for column in ("ts_code", "surv_date", "org_name"):
+        if column not in frame.columns:
+            frame[column] = ""
+        frame[column] = frame[column].fillna("").astype(str)
+    return _write_payload_table(
+        INSTITUTIONAL_RESEARCH_TABLE,
+        frame,
+        key_columns=["ts_code", "surv_date", "org_name"],
+        columns=["ts_code", "surv_date", "org_name", "ann_date"],
+        date_columns=["surv_date", "ann_date"],
+        **kwargs,
+    )
+
+
+def write_corporate_events(dataset: str, frame: pd.DataFrame, **kwargs: object) -> int:
+    frame = frame.copy()
+    frame["dataset"] = dataset
+    date_column = next((column for column in ("ann_date", "trade_date", "holder_trade_date", "imp_date", "release_date") if column in frame.columns), None)
+    frame["event_date"] = frame[date_column] if date_column else None
+    frame["event_key"] = frame.apply(lambda row: _research_business_key(dataset, {str(k): _json_value(v) for k, v in row.items()}, "event"), axis=1)
+    return _write_payload_table(
+        CORPORATE_EVENTS_TABLE,
+        frame,
+        key_columns=["dataset", "ts_code", "event_date", "event_key"],
+        columns=["dataset", "ts_code", "event_date", "event_key"],
+        date_columns=["event_date"],
+        **kwargs,
+    )
+
+
+@dataclass(frozen=True)
+class _NormalizationContext:
+    dataset: str
+    endpoint: str
+    frame: pd.DataFrame
+    db_path: Path
+    source: str
+    retrieved_at: str
+
+
+@dataclass(frozen=True)
+class _NormalizerRule:
+    endpoints: frozenset[str]
+    required_columns: frozenset[str]
+    handler: Callable[[_NormalizationContext], int]
+
+    def matches(self, context: _NormalizationContext) -> bool:
+        return context.endpoint in self.endpoints and self.required_columns.issubset(context.frame.columns)
+
+
+def _frame_handler(writer: Callable[..., int]) -> Callable[[_NormalizationContext], int]:
+    def handle(context: _NormalizationContext) -> int:
+        return writer(
+            context.frame,
+            db_path=context.db_path,
+            source=context.source,
+            retrieved_at=context.retrieved_at,
+        )
+
+    return handle
+
+
+def _sector_master_handler(context: _NormalizationContext) -> int:
+    return write_sector_master(
+        SECTOR_MASTER_ENDPOINT_PROVIDERS[context.endpoint],
+        context.frame,
+        db_path=context.db_path,
+        source=context.source,
+        retrieved_at=context.retrieved_at,
+    )
+
+
+def _sector_daily_handler(context: _NormalizationContext) -> int:
+    return write_sector_daily(
+        SECTOR_DAILY_ENDPOINT_PROVIDERS[context.endpoint],
+        context.frame,
+        db_path=context.db_path,
+        source=context.source,
+        retrieved_at=context.retrieved_at,
+    )
+
+
+def _sector_flow_handler(context: _NormalizationContext) -> int:
+    return write_sector_flow_daily(
+        "ths",
+        context.frame,
+        db_path=context.db_path,
+        source=context.source,
+        retrieved_at=context.retrieved_at,
+    )
+
+
+def _sector_membership_handler(context: _NormalizationContext) -> int:
+    return write_sector_membership(
+        context.endpoint,
+        context.frame,
+        db_path=context.db_path,
+        source=context.source,
+        retrieved_at=context.retrieved_at,
+    )
+
+
+def _corporate_events_handler(context: _NormalizationContext) -> int:
+    return write_corporate_events(
+        context.dataset,
+        context.frame,
+        db_path=context.db_path,
+        source=context.source,
+        retrieved_at=context.retrieved_at,
+    )
+
+
+NORMALIZER_RULES = (
+    _NormalizerRule(frozenset({"daily_basic"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_daily_basic)),
+    _NormalizerRule(frozenset({"fina_indicator"}), frozenset({"ts_code", "end_date"}), _frame_handler(write_fina_indicator)),
+    _NormalizerRule(
+        frozenset({"stock_basic"}),
+        frozenset({"ts_code", "name", "industry", "market", "list_date"}),
+        _frame_handler(write_stock_basic),
+    ),
+    _NormalizerRule(frozenset({"trade_cal"}), frozenset({"exchange", "cal_date"}), _frame_handler(write_trading_calendar)),
+    _NormalizerRule(frozenset({"index_daily"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_index_daily)),
+    _NormalizerRule(frozenset({"index_dailybasic"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_index_daily_basic)),
+    _NormalizerRule(frozenset({"index_classify"}), frozenset({"src", "index_code"}), _frame_handler(write_industry_classification)),
+    _NormalizerRule(frozenset({"index_member"}), frozenset({"index_code", "con_code", "in_date"}), _frame_handler(write_index_members)),
+    _NormalizerRule(frozenset({"index_weight"}), frozenset({"index_code", "con_code", "trade_date"}), _frame_handler(write_index_weights)),
+    _NormalizerRule(frozenset({"daily_info"}), frozenset({"trade_date", "ts_code"}), _frame_handler(write_market_daily_info)),
+    _NormalizerRule(frozenset({"moneyflow_mkt_dc"}), frozenset({"trade_date", "net_amount"}), _frame_handler(write_market_moneyflow)),
+    _NormalizerRule(frozenset({"margin"}), frozenset({"trade_date", "exchange_id"}), _frame_handler(write_market_margin)),
+    _NormalizerRule(frozenset(SECTOR_MASTER_ENDPOINT_PROVIDERS), frozenset(), _sector_master_handler),
+    _NormalizerRule(frozenset(SECTOR_DAILY_ENDPOINT_PROVIDERS), frozenset(), _sector_daily_handler),
+    _NormalizerRule(frozenset({"moneyflow_ind_ths"}), frozenset(), _sector_flow_handler),
+    _NormalizerRule(frozenset({"moneyflow", "moneyflow_ths", "moneyflow_dc"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_market_flow_daily)),
+    _NormalizerRule(frozenset({"limit_list_d", "limit_step", "kpl_list", "kpl_stock_rank"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_limit_events)),
+    _NormalizerRule(frozenset(SECTOR_MEMBER_ENDPOINT_PROVIDERS), frozenset({"con_code"}), _sector_membership_handler),
+    _NormalizerRule(frozenset({"cyq_chips", "cyq_perf"}), frozenset({"ts_code", "trade_date", "price"}), _frame_handler(write_chip_distribution)),
+    _NormalizerRule(frozenset({"stk_factor", "stk_factor_pro"}), frozenset({"ts_code", "trade_date"}), _frame_handler(write_factor_daily)),
+    _NormalizerRule(frozenset({"stk_surv"}), frozenset({"ts_code", "surv_date"}), _frame_handler(write_institutional_research)),
+    _NormalizerRule(
+        frozenset({"repurchase", "pledge_detail", "stk_holdertrade", "block_trade", "namechange", "share_float"}),
+        frozenset({"ts_code"}),
+        _corporate_events_handler,
+    ),
+)
+
+
 def persist_tushare_collection(
     dataset: str,
     endpoint: str,
@@ -1442,93 +2026,93 @@ def persist_tushare_collection(
         source=source,
         retrieved_at=timestamp,
     )
-    columns = set(frame.columns)
-    normalized_rows = 0
-    if {"ts_code", "trade_date"}.issubset(columns) and endpoint == "daily_basic":
-        normalized_rows = write_daily_basic(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"ts_code", "end_date"}.issubset(columns) and endpoint == "fina_indicator":
-        normalized_rows = write_fina_indicator(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"ts_code", "name", "industry", "market", "list_date"}.issubset(columns) and endpoint == "stock_basic":
-        normalized_rows = write_stock_basic(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"exchange", "cal_date"}.issubset(columns) and endpoint == "trade_cal":
-        normalized_rows = write_trading_calendar(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"ts_code", "trade_date"}.issubset(columns) and endpoint == "index_daily":
-        normalized_rows = write_index_daily(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"ts_code", "trade_date"}.issubset(columns) and endpoint == "index_dailybasic":
-        normalized_rows = write_index_daily_basic(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"src", "index_code"}.issubset(columns) and endpoint == "index_classify":
-        normalized_rows = write_industry_classification(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"index_code", "con_code", "in_date"}.issubset(columns) and endpoint == "index_member":
-        normalized_rows = write_index_members(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"index_code", "con_code", "trade_date"}.issubset(columns) and endpoint == "index_weight":
-        normalized_rows = write_index_weights(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"trade_date", "ts_code"}.issubset(columns) and endpoint == "daily_info":
-        normalized_rows = write_market_daily_info(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"trade_date", "net_amount"}.issubset(columns) and endpoint == "moneyflow_mkt_dc":
-        normalized_rows = write_market_moneyflow(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
-    elif {"trade_date", "exchange_id"}.issubset(columns) and endpoint == "margin":
-        normalized_rows = write_market_margin(
-            frame,
-            db_path=db_path,
-            source=source,
-            retrieved_at=timestamp,
-        )
+    context = _NormalizationContext(
+        dataset=dataset,
+        endpoint=endpoint,
+        frame=frame,
+        db_path=db_path,
+        source=source,
+        retrieved_at=timestamp,
+    )
+    rule = next((candidate for candidate in NORMALIZER_RULES if candidate.matches(context)), None)
+    normalized_rows = rule.handler(context) if rule else 0
     return observation_rows, normalized_rows
+
+
+def load_sector_master(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    provider: str = "ths",
+    sector_type: str | None = None,
+    sector_codes: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    from market_data_sector import load_sector_master as implementation
+
+    return implementation(
+        db_path=db_path,
+        provider=provider,
+        sector_type=sector_type,
+        sector_codes=sector_codes,
+    )
+
+
+def load_sector_daily_history(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    provider: str = "ths",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    sector_type: str | None = None,
+    sector_codes: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    from market_data_sector import load_sector_daily_history as implementation
+
+    return implementation(
+        db_path=db_path,
+        provider=provider,
+        start_date=start_date,
+        end_date=end_date,
+        sector_type=sector_type,
+        sector_codes=sector_codes,
+    )
+
+
+def load_sector_memberships(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    provider: str = "ths",
+    stock_code: str | None = None,
+    sector_code: str | None = None,
+    as_of: str | None = None,
+) -> pd.DataFrame:
+    from market_data_sector import load_sector_memberships as implementation
+
+    return implementation(
+        db_path=db_path,
+        provider=provider,
+        stock_code=stock_code,
+        sector_code=sector_code,
+        as_of=as_of,
+    )
+
+
+def load_sector_cached_dates(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    provider: str,
+    dataset: Literal["daily", "flow"],
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> set[str]:
+    from market_data_sector import load_sector_cached_dates as implementation
+
+    return implementation(
+        db_path=db_path,
+        provider=provider,
+        dataset=dataset,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 def load_daily_matrices(
@@ -1581,6 +2165,45 @@ def load_daily_matrices(
     prices.columns.name = None
     volumes.columns.name = None
     return prices, volumes
+
+
+def load_daily_price_history(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    symbols: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Load stored forward-adjusted close, high, and low rows for historical context."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Market data database not found: {db_path}")
+
+    where: list[str] = []
+    params: list[str] = []
+    if start_date:
+        where.append("trade_date >= ?")
+        params.append(normalize_trade_date(start_date))
+    if end_date:
+        where.append("trade_date <= ?")
+        params.append(normalize_trade_date(end_date))
+    if symbols:
+        clean_symbols = [str(symbol) for symbol in symbols if symbol]
+        if clean_symbols:
+            placeholders = ", ".join("?" for _ in clean_symbols)
+            where.append(f"ts_code IN ({placeholders})")
+            params.extend(clean_symbols)
+
+    predicate = f"WHERE {' AND '.join(where)}" if where else ""
+    query = f"""
+        SELECT trade_date, ts_code, close_qfq, high_qfq, low_qfq
+        FROM {DAILY_TABLE}
+        {predicate}
+        ORDER BY trade_date, ts_code
+    """
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        return pd.read_sql_query(query, connection, params=params, parse_dates=["trade_date"])
 
 
 def _symbol_predicate(symbols: Sequence[str] | None, params: list[str]) -> str:

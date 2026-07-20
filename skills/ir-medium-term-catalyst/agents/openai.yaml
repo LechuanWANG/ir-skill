@@ -1,0 +1,4 @@
+interface:
+  display_name: "IR Medium-Term"
+  short_description: "Catalyst-driven investment research"
+  default_prompt: "Use $ir-medium-term-catalyst for evidence-led medium-term catalyst research."

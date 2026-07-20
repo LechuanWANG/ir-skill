@@ -1,0 +1,4 @@
+interface:
+  display_name: "IR Short-Term"
+  short_description: "Event and technical trading research"
+  default_prompt: "Use $ir-short-term-trading for evidence-led short-term trading research."

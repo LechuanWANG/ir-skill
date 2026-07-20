@@ -1,5 +1,0 @@
-interface:
-  display_name: "IR Skill"
-  short_description: "Evidence-led China and cross-asset research"
-  icon_large: "./assets/ir-skill-logo.svg"
-  default_prompt: "Use $ir-skill for evidence-led China and cross-asset investment research; use my LLM Wiki only when I authorize it."

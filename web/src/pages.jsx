@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight,
   Building2,
@@ -13,6 +13,7 @@ import {
   FolderArchive,
   Globe2,
   Layers3,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react'
 import { del, get, post } from './api'
 import { EmptyState, LoadingState } from './components'
+import { useDataSync } from './useDataSync'
 
 const DOMAIN_LABELS = { company: '个股', industry: '行业', market: '市场', macro: '宏观', other: '其他' }
 const KIND_LABELS = { temporary_source: '原始文件', source_markdown: '归档文本', report: '正式报告', output_markdown: '输出分析' }
@@ -439,67 +441,7 @@ function dataSyncMessage(sync) {
 }
 
 export function DataPage() {
-  const [tables, setTables] = useState([])
-  const [selected, setSelected] = useState(null)
-  const [preview, setPreview] = useState(null)
-  const [error, setError] = useState('')
-  const [refreshVersion, setRefreshVersion] = useState(0)
-  const [sync, setSync] = useState({ state: 'idle' })
-  const [syncing, setSyncing] = useState(false)
-  const refreshTables = useCallback(async () => {
-    const payload = await get('/api/data/tables')
-    setTables(payload.tables)
-    setSelected((current) => payload.tables.some((table) => table.name === current) ? current : payload.tables[0]?.name ?? null)
-  }, [])
-  const syncLatestData = useCallback(async () => {
-    try {
-      const payload = await post('/api/data/sync', {})
-      setSync(payload.sync)
-      const isRunning = payload.sync?.state === 'running'
-      setSyncing(isRunning)
-      if (!isRunning) {
-        await refreshTables()
-        setRefreshVersion((version) => version + 1)
-      }
-    } catch (currentError) {
-      setSync({ state: 'error', message: currentError.message })
-      setSyncing(false)
-    }
-  }, [refreshTables])
-  useEffect(() => { refreshTables().catch((currentError) => setError(currentError.message)) }, [refreshTables])
-  useEffect(() => {
-    if (!selected) return undefined
-    let cancelled = false
-    setPreview(null)
-    get(`/api/data/tables/${selected}`).then((payload) => { if (!cancelled) setPreview(payload) }).catch((currentError) => { if (!cancelled) setError(currentError.message) })
-    return () => { cancelled = true }
-  }, [refreshVersion, selected])
-  useEffect(() => {
-    if (!syncing) return undefined
-    let cancelled = false
-    const poll = async () => {
-      try {
-        const payload = await get('/api/data/sync')
-        if (cancelled) return
-        setSync(payload.sync)
-        if (payload.sync?.state !== 'running') {
-          setSyncing(false)
-          if (payload.sync?.state === 'success') {
-            await refreshTables()
-            if (!cancelled) setRefreshVersion((version) => version + 1)
-          }
-        }
-      } catch (currentError) {
-        if (!cancelled) {
-          setSync({ state: 'error', message: currentError.message })
-          setSyncing(false)
-        }
-      }
-    }
-    poll()
-    const timer = window.setInterval(poll, 2000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [refreshTables, syncing])
+  const { error, preview, selected, setSelected, sync, syncLatestData, syncing, tables } = useDataSync()
   if (error) return <EmptyState title="无法读取同步数据" description={error} icon={Database} />
   if (!tables.length) return <LoadingState />
   return (
@@ -518,7 +460,9 @@ const profileFields = [
 ]
 
 function emptyHolding() {
-  return { symbol: '', name: '', quantity: '', average_cost: '', latest_price: '', target_weight: '', notes: '' }
+  const now = new Date()
+  const asOf = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return { symbol: '', name: '', quantity: '', average_cost: '', latest_price: '', target_weight: '', as_of: asOf, notes: '' }
 }
 
 function emptyTrade() {
@@ -567,15 +511,173 @@ export function ProfilePage({ notify }) {
         <label><span>研究与决策备注</span><textarea value={profile.notes ?? ''} onChange={(event) => update('notes', event.target.value)} placeholder="记录你希望长期沿用的研究原则、证据要求与复盘方式。" /></label>
       </section>
       <section className="profile-section portfolio-section">
-        <div className="section-heading"><div><h2>当前持仓</h2><p>填写数量、成本和最新价格后，界面会计算浮动盈亏；这些数字以你最后保存的时点为准。</p></div><button type="button" className="button secondary" onClick={() => addEntry('holdings', emptyHolding())}><Plus size={16} /> 新增持仓</button></div>
+        <div className="section-heading"><div><h2>当前持仓</h2><p>保存后，Agent 可在持仓研究、交易策略、止损和仓位问题中读取这些信息。</p></div><button type="button" className="button secondary" onClick={() => addEntry('holdings', emptyHolding())}><Plus size={16} /> 新增持仓</button></div>
         <div className="portfolio-summary"><div><span>持仓数量</span><strong>{summary.holdings}</strong></div><div><span>已填写浮盈亏</span><strong className={summary.unrealizedPnl >= 0 ? 'positive' : 'negative'}>{formatMoney(summary.unrealizedPnl)}</strong></div><div><span>交易笔数</span><strong>{summary.trades}</strong></div><div><span>已实现盈亏</span><strong className={summary.realizedPnl >= 0 ? 'positive' : 'negative'}>{formatMoney(summary.realizedPnl)}</strong></div></div>
-        {holdings.length === 0 ? <EmptyState title="尚未填写持仓" description="新增持仓后，后续持仓复盘可以读取成本、数量和当前盈亏。" /> : <div className="entry-stack">{holdings.map((holding, index) => <article className="entry-card" key={`holding-${index}`}><div className="entry-card-heading"><strong>持仓 {index + 1}</strong><button type="button" className="icon-button" aria-label={`删除持仓 ${index + 1}`} onClick={() => removeEntry('holdings', index)}><Trash2 size={15} /></button></div><div className="entry-grid holdings-grid"><label><span>证券代码</span><input value={holding.symbol ?? ''} onChange={(event) => updateEntry('holdings', index, 'symbol', event.target.value)} placeholder="例如：600519.SH" /></label><label><span>证券名称</span><input value={holding.name ?? ''} onChange={(event) => updateEntry('holdings', index, 'name', event.target.value)} placeholder="例如：贵州茅台" /></label><label><span>持仓数量</span><input inputMode="decimal" type="number" value={holding.quantity ?? ''} onChange={(event) => updateEntry('holdings', index, 'quantity', event.target.value)} /></label><label><span>持仓均价</span><input inputMode="decimal" type="number" step="0.0001" value={holding.average_cost ?? ''} onChange={(event) => updateEntry('holdings', index, 'average_cost', event.target.value)} /></label><label><span>最新价格</span><input inputMode="decimal" type="number" step="0.0001" value={holding.latest_price ?? ''} onChange={(event) => updateEntry('holdings', index, 'latest_price', event.target.value)} /></label><label><span>目标仓位（%）</span><input inputMode="decimal" type="number" step="0.1" value={holding.target_weight ?? ''} onChange={(event) => updateEntry('holdings', index, 'target_weight', event.target.value)} /></label><label className="wide"><span>持仓备注</span><input value={holding.notes ?? ''} onChange={(event) => updateEntry('holdings', index, 'notes', event.target.value)} placeholder="例如：核心逻辑、计划持有期、下次复核条件" /></label><div className="pnl-field"><span>浮动盈亏</span><strong className={(calculateHoldingPnl(holding) || 0) >= 0 ? 'positive' : 'negative'}>{calculateHoldingPnl(holding) === null ? '待填写价格' : formatMoney(calculateHoldingPnl(holding))}</strong></div></div></article>)}</div>}
+        {holdings.length === 0 ? <EmptyState title="尚未填写持仓" description="新增持仓后，Agent 可以在相关研究中读取数量、成本和备注。" /> : <div className="entry-stack">{holdings.map((holding, index) => <article className="entry-card" key={`holding-${index}`}><div className="entry-card-heading"><strong>持仓 {index + 1}</strong><button type="button" className="icon-button" aria-label={`删除持仓 ${index + 1}`} onClick={() => removeEntry('holdings', index)}><Trash2 size={15} /></button></div><div className="entry-grid holdings-grid"><label><span>证券代码</span><input value={holding.symbol ?? ''} onChange={(event) => updateEntry('holdings', index, 'symbol', event.target.value)} placeholder="例如：600519.SH" /></label><label><span>证券名称</span><input value={holding.name ?? ''} onChange={(event) => updateEntry('holdings', index, 'name', event.target.value)} placeholder="例如：贵州茅台" /></label><label><span>持仓数量</span><input inputMode="decimal" type="number" min="0" value={holding.quantity ?? ''} onChange={(event) => updateEntry('holdings', index, 'quantity', event.target.value)} /></label><label><span>持仓均价</span><input inputMode="decimal" type="number" min="0" step="0.0001" value={holding.average_cost ?? ''} onChange={(event) => updateEntry('holdings', index, 'average_cost', event.target.value)} /></label><label><span>最新价格</span><input inputMode="decimal" type="number" min="0" step="0.0001" value={holding.latest_price ?? ''} onChange={(event) => updateEntry('holdings', index, 'latest_price', event.target.value)} /></label><label><span>目标仓位（%）</span><input inputMode="decimal" type="number" min="0" max="100" step="0.1" value={holding.target_weight ?? ''} onChange={(event) => updateEntry('holdings', index, 'target_weight', event.target.value)} /></label><label><span>持仓截至日期</span><input type="date" value={holding.as_of ?? ''} onChange={(event) => updateEntry('holdings', index, 'as_of', event.target.value)} /></label><label className="wide"><span>持仓备注</span><input value={holding.notes ?? ''} onChange={(event) => updateEntry('holdings', index, 'notes', event.target.value)} placeholder="例如：核心逻辑、计划持有期、下次复核条件" /></label><div className="pnl-field"><span>浮动盈亏</span><strong className={(calculateHoldingPnl(holding) || 0) >= 0 ? 'positive' : 'negative'}>{calculateHoldingPnl(holding) === null ? '待填写价格' : formatMoney(calculateHoldingPnl(holding))}</strong></div></div></article>)}</div>}
       </section>
       <section className="profile-section portfolio-section">
         <div className="section-heading"><div><h2>交易与盈亏记录</h2><p>逐笔记录买卖、费用与已实现盈亏，让 Agent 在复盘时可以看到真实交易背景。</p></div><button type="button" className="button secondary" onClick={() => addEntry('trades', emptyTrade())}><Plus size={16} /> 新增交易</button></div>
         {trades.length === 0 ? <EmptyState title="尚未填写交易记录" description="记录买入、卖出与已实现盈亏后，可用于后续的交易复盘。" /> : <div className="entry-stack">{trades.map((trade, index) => <article className="entry-card" key={`trade-${index}`}><div className="entry-card-heading"><strong>交易 {index + 1}</strong><button type="button" className="icon-button" aria-label={`删除交易 ${index + 1}`} onClick={() => removeEntry('trades', index)}><Trash2 size={15} /></button></div><div className="entry-grid trades-grid"><label><span>交易日期</span><input type="date" value={trade.date ?? ''} onChange={(event) => updateEntry('trades', index, 'date', event.target.value)} /></label><label><span>方向</span><select value={trade.side ?? 'buy'} onChange={(event) => updateEntry('trades', index, 'side', event.target.value)}><option value="buy">买入</option><option value="sell">卖出</option></select></label><label><span>证券代码</span><input value={trade.symbol ?? ''} onChange={(event) => updateEntry('trades', index, 'symbol', event.target.value)} placeholder="例如：000001.SZ" /></label><label><span>证券名称</span><input value={trade.name ?? ''} onChange={(event) => updateEntry('trades', index, 'name', event.target.value)} /></label><label><span>成交数量</span><input inputMode="decimal" type="number" value={trade.quantity ?? ''} onChange={(event) => updateEntry('trades', index, 'quantity', event.target.value)} /></label><label><span>成交价格</span><input inputMode="decimal" type="number" step="0.0001" value={trade.price ?? ''} onChange={(event) => updateEntry('trades', index, 'price', event.target.value)} /></label><label><span>费用</span><input inputMode="decimal" type="number" step="0.01" value={trade.fees ?? ''} onChange={(event) => updateEntry('trades', index, 'fees', event.target.value)} /></label><label><span>已实现盈亏</span><input inputMode="decimal" type="number" step="0.01" value={trade.realized_pnl ?? ''} onChange={(event) => updateEntry('trades', index, 'realized_pnl', event.target.value)} /></label><label className="wide"><span>交易备注</span><input value={trade.notes ?? ''} onChange={(event) => updateEntry('trades', index, 'notes', event.target.value)} placeholder="例如：交易理由、偏差、复盘结论" /></label></div></article>)}</div>}
       </section>
-      <div className="form-footer"><p>所有资料仅保存到 <code>data/research-library/settings/investor-profile.json</code>。持仓与盈亏仅作为你提供的本地研究上下文，不会自动更新或写入报告。</p><button className="button primary" type="submit">{saved ? '再次保存全部资料' : '保存投资风格与交易记录'}</button></div>
+      <div className="form-footer"><p>资料仅保存到 <code>data/research-library/settings/investor-profile.json</code>。Agent 只在持仓、行动或交易策略相关研究中读取当前持仓，不会自动写入报告。</p><button className="button primary" type="submit">{saved ? '再次保存全部资料' : '保存投资风格与交易记录'}</button></div>
+    </form>
+  )
+}
+
+const WATCH_STATUS = {
+  tracking: '持续跟踪',
+  'waiting-price': '等待价格',
+  'waiting-evidence': '等待证据',
+  paused: '暂停跟踪',
+  archived: '已归档',
+}
+const RESEARCH_PATH = {
+  'long-term': '长期基本面',
+  'medium-term': '中期催化',
+  'short-term': '短期事件与交易',
+  mixed: '组合研究路径',
+}
+const CONFIDENCE = { high: '高', medium: '中', low: '低' }
+const ACTION_LABELS = ['优先行动', '等待价格', '等待证据', '选择现金', '继续持有', '降低暴露', '退出或回避']
+
+function localDateValue() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function emptyWatchItem() {
+  const today = localDateValue()
+  return {
+    symbol: '', name: '', status: 'tracking', research_path: '', action_label: '', confidence: '',
+    thesis: '', follow_up: '', invalidation: '', recommended_on: today, last_researched_on: today,
+    next_review_on: '', source_reports: [], notes: '',
+  }
+}
+
+export function WatchlistPage({ notify }) {
+  const [watchlist, setWatchlist] = useState({ items: [] })
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState('active')
+  const [saved, setSaved] = useState(false)
+  const [expandedItemIndex, setExpandedItemIndex] = useState(null)
+  const deferredQuery = useDeferredValue(query.trim().toLowerCase())
+
+  useEffect(() => {
+    get('/api/watchlist')
+      .then((payload) => setWatchlist({ ...payload, items: Array.isArray(payload.items) ? payload.items : [] }))
+      .catch((error) => notify(error.message))
+  }, [notify])
+
+  const items = watchlist.items || []
+  const indexedItems = useMemo(() => items.map((item, index) => ({ item, index })), [items])
+  const visibleItems = useMemo(() => indexedItems.filter(({ item }) => {
+    const matchesQuery = !deferredQuery || `${item.symbol || ''} ${item.name || ''} ${item.thesis || ''}`.toLowerCase().includes(deferredQuery)
+    const matchesStatus = status === 'all' || (status === 'active' ? item.status !== 'archived' : item.status === status)
+    return matchesQuery && matchesStatus
+  }), [deferredQuery, indexedItems, status])
+  const summary = useMemo(() => {
+    const today = localDateValue()
+    return {
+      total: items.filter((item) => item.status !== 'archived').length,
+      waitingPrice: items.filter((item) => item.status === 'waiting-price').length,
+      waitingEvidence: items.filter((item) => item.status === 'waiting-evidence').length,
+      due: items.filter((item) => item.status !== 'archived' && item.next_review_on && item.next_review_on <= today).length,
+    }
+  }, [items])
+
+  const updateItem = (index, key, value) => {
+    setSaved(false)
+    setWatchlist((current) => ({
+      ...current,
+      items: current.items.map((item, currentIndex) => currentIndex === index ? { ...item, [key]: value } : item),
+    }))
+  }
+  const addItem = () => {
+    const newIndex = items.length
+    setWatchlist((current) => ({ ...current, items: [...current.items, emptyWatchItem()] }))
+    setExpandedItemIndex(newIndex)
+    setStatus('active')
+    setQuery('')
+    setSaved(false)
+  }
+  const removeItem = (index) => {
+    setWatchlist((current) => ({ ...current, items: current.items.filter((_, currentIndex) => currentIndex !== index) }))
+    setExpandedItemIndex((current) => {
+      if (current === null || current === index) return null
+      return current > index ? current - 1 : current
+    })
+    setSaved(false)
+  }
+  const toggleItem = (index) => setExpandedItemIndex((current) => current === index ? null : index)
+  const save = async (event) => {
+    event.preventDefault()
+    try {
+      const payload = await post('/api/watchlist', watchlist)
+      setWatchlist(payload)
+      setSaved(true)
+      notify('研究跟踪池已保存；Agent 后续可按原研究路径继续跟踪。')
+    } catch (error) { notify(error.message) }
+  }
+
+  return (
+    <form className="watchlist-page" onSubmit={save}>
+      <section className="watchlist-summary surface" aria-label="研究跟踪池摘要">
+        <div><span>持续跟踪</span><strong>{summary.total}</strong></div>
+        <div><span>等待价格</span><strong>{summary.waitingPrice}</strong></div>
+        <div><span>等待证据</span><strong>{summary.waitingEvidence}</strong></div>
+        <div><span>待复核</span><strong>{summary.due}</strong></div>
+      </section>
+      <div className="watchlist-toolbar surface">
+        <div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索证券代码、名称或研究逻辑" /></div>
+        <select aria-label="跟踪状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}>
+          <option value="active">当前跟踪</option><option value="all">全部状态</option>
+          {Object.entries(WATCH_STATUS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+        <span className="result-count">{visibleItems.length} / {items.length} 只</span>
+        <button type="button" className="button secondary" onClick={addItem}><Plus size={16} /> 新增标的</button>
+        <button type="submit" className="button primary">{saved ? '再次保存' : '保存跟踪池'}</button>
+      </div>
+      {visibleItems.length === 0 ? (
+        <section className="surface"><EmptyState title="暂无符合条件的跟踪标的" description="新增一只股票，或调整搜索和状态筛选。" /></section>
+      ) : (
+        <div className="watchlist-list">{visibleItems.map(({ item, index }) => (
+          <article className={`watchlist-card ${expandedItemIndex === index ? 'is-expanded' : ''}`} key={`${item.symbol || 'new'}-${index}`}>
+            <div className="watchlist-card-heading">
+              <div className="watchlist-card-identity"><span>{item.symbol || `新标的 ${index + 1}`}</span><strong>{item.name || '尚未填写名称'}</strong></div>
+              <div className="watchlist-card-summary-fields">
+                <span className={`watch-status ${item.status || 'tracking'}`}>{WATCH_STATUS[item.status] || '持续跟踪'}</span>
+                <span>{RESEARCH_PATH[item.research_path] || '未设置研究路径'}</span>
+                <span>{item.action_label || '暂未设定行动'}</span>
+                <span>{item.next_review_on ? `下次复核 ${item.next_review_on}` : '未设置复核日'}</span>
+              </div>
+              <button type="button" className="watchlist-card-toggle" aria-expanded={expandedItemIndex === index} aria-controls={`watchlist-details-${index}`} onClick={() => toggleItem(index)}>
+                {expandedItemIndex === index ? <ChevronDown size={15} /> : <Pencil size={14} />}
+                {expandedItemIndex === index ? '收起' : '编辑'}
+              </button>
+            </div>
+            {expandedItemIndex === index && <div className="watchlist-card-details" id={`watchlist-details-${index}`}>
+              <div className="watchlist-detail-actions"><span>展开后可编辑完整研究档案</span><button type="button" className="icon-button" aria-label={`移除跟踪标的 ${index + 1}`} onClick={() => removeItem(index)}><Trash2 size={15} /></button></div>
+              <div className="watchlist-grid">
+              <label><span>证券代码</span><input required value={item.symbol ?? ''} onChange={(event) => updateItem(index, 'symbol', event.target.value)} placeholder="例如：600519.SH" /></label>
+              <label><span>证券名称</span><input value={item.name ?? ''} onChange={(event) => updateItem(index, 'name', event.target.value)} placeholder="例如：贵州茅台" /></label>
+              <label><span>跟踪状态</span><select value={item.status ?? 'tracking'} onChange={(event) => updateItem(index, 'status', event.target.value)}>{Object.entries(WATCH_STATUS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label><span>研究路径</span><select required value={item.research_path ?? ''} onChange={(event) => updateItem(index, 'research_path', event.target.value)}><option value="">请选择</option>{Object.entries(RESEARCH_PATH).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label><span>行动标签</span><select value={item.action_label ?? ''} onChange={(event) => updateItem(index, 'action_label', event.target.value)}><option value="">暂无</option>{ACTION_LABELS.map((label) => <option value={label} key={label}>{label}</option>)}</select></label>
+              <label><span>置信度</span><select value={item.confidence ?? ''} onChange={(event) => updateItem(index, 'confidence', event.target.value)}><option value="">暂无</option>{Object.entries(CONFIDENCE).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label><span>首次推荐日期</span><input type="date" value={item.recommended_on ?? ''} onChange={(event) => updateItem(index, 'recommended_on', event.target.value)} /></label>
+              <label><span>最近研究日期</span><input type="date" value={item.last_researched_on ?? ''} onChange={(event) => updateItem(index, 'last_researched_on', event.target.value)} /></label>
+              <label className="span-4"><span>核心研究逻辑</span><textarea rows="3" value={item.thesis ?? ''} onChange={(event) => updateItem(index, 'thesis', event.target.value)} placeholder="记录为什么值得继续研究，以及当前判断依赖的关键变量。" /></label>
+              <label className="span-2"><span>下一步跟踪条件</span><textarea rows="3" value={item.follow_up ?? ''} onChange={(event) => updateItem(index, 'follow_up', event.target.value)} placeholder="需要等待或持续核验的价格、财报、订单、政策或技术条件。" /></label>
+              <label className="span-2"><span>失效或撤销条件</span><textarea rows="3" value={item.invalidation ?? ''} onChange={(event) => updateItem(index, 'invalidation', event.target.value)} placeholder="哪些事实会推翻当前逻辑或停止跟踪。" /></label>
+              <label><span>下次复核日期</span><input type="date" value={item.next_review_on ?? ''} onChange={(event) => updateItem(index, 'next_review_on', event.target.value)} /></label>
+              <label className="span-3"><span>关联研究报告</span><textarea rows="2" value={(item.source_reports || []).join('\n')} onChange={(event) => updateItem(index, 'source_reports', event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean))} placeholder="每行一个项目相对路径，例如 report/company/2026-07-19/...md" /></label>
+              <label className="span-4"><span>补充备注</span><input value={item.notes ?? ''} onChange={(event) => updateItem(index, 'notes', event.target.value)} placeholder="记录不属于核心逻辑但有助于后续复用的背景。" /></label>
+              </div>
+            </div>}
+          </article>
+        ))}</div>
+      )}
+      <div className="watchlist-footer"><p>保存位置：<code>data/research-library/tracking/research-watchlist.json</code></p><button type="submit" className="button primary">保存全部跟踪标的</button></div>
     </form>
   )
 }

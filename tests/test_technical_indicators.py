@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 import pandas as pd
@@ -13,8 +14,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import tushare_mode_data
-from market_data_store import write_daily_market_data
-from technical_indicators import TechnicalIndicatorSettings, summarize_technical_indicators
+from market_data_store import load_daily_price_history, write_daily_market_data
+from technical_indicators import (
+    TechnicalIndicatorSettings,
+    calculate_technical_indicators,
+    summarize_technical_indicators,
+)
 
 
 class TechnicalIndicatorSnapshotTests(unittest.TestCase):
@@ -70,6 +75,73 @@ class TechnicalIndicatorSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "empty technical-indicator history"):
             summarize_technical_indicators(pd.DataFrame(), settings=self.settings)
 
+    def test_exposes_historical_highs_and_persistent_uptrend(self) -> None:
+        index = pd.date_range("2023-01-02", periods=800, freq="B", name="trade_date")
+        close = pd.Series([100 * (1.0008**position) for position in range(len(index))], index=index)
+        indicators = calculate_technical_indicators(
+            close,
+            high_prices=close * 1.02,
+            low_prices=close * 0.98,
+            settings=self.settings,
+        )
+
+        structure = summarize_technical_indicators(indicators, settings=self.settings)["historical_price_structure"]
+        full_history = structure["periods"]["full_available_history"]
+
+        self.assertEqual(full_history["historical_high_basis"], "forward_adjusted_intraday_high")
+        self.assertEqual(full_history["historical_high_trade_date"], index[-1].strftime("%Y-%m-%d"))
+        self.assertEqual(full_history["price_path_label"], "persistent_uptrend")
+        self.assertTrue(structure["periods"]["trailing_1y"]["available"])
+        self.assertTrue(structure["periods"]["trailing_3y"]["available"])
+
+    def test_identifies_a_sideways_or_oscillating_price_path(self) -> None:
+        index = pd.date_range("2025-01-02", periods=260, freq="B", name="trade_date")
+        close = pd.Series([100 + ((position % 20) - 10) for position in range(len(index))], index=index)
+        indicators = calculate_technical_indicators(close, settings=self.settings)
+
+        full_history = summarize_technical_indicators(indicators, settings=self.settings)["historical_price_structure"][
+            "periods"
+        ]["full_available_history"]
+
+        self.assertEqual(full_history["historical_high_basis"], "forward_adjusted_close_fallback")
+        self.assertEqual(full_history["price_path_label"], "sideways_or_oscillating")
+        self.assertLess(full_history["trend_r_squared"], 0.25)
+
+    def test_legacy_daily_table_is_migrated_and_loads_price_extremes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "market.sqlite"
+            with closing(sqlite3.connect(db_path)) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE a_share_daily (
+                        trade_date TEXT NOT NULL,
+                        ts_code TEXT NOT NULL,
+                        close_qfq REAL,
+                        volume REAL,
+                        source TEXT NOT NULL,
+                        retrieved_at TEXT NOT NULL,
+                        PRIMARY KEY (trade_date, ts_code)
+                    )
+                    """
+                )
+                connection.commit()
+
+            index = pd.DatetimeIndex([pd.Timestamp("2026-06-01")], name="trade_date")
+            prices = pd.DataFrame({"000001.SZ": [10.0]}, index=index)
+            volumes = pd.DataFrame({"000001.SZ": [1_000_000]}, index=index)
+            write_daily_market_data(
+                prices,
+                volumes,
+                high_prices=pd.DataFrame({"000001.SZ": [10.5]}, index=index),
+                low_prices=pd.DataFrame({"000001.SZ": [9.5]}, index=index),
+                db_path=db_path,
+                source="test",
+            )
+
+            history = load_daily_price_history(db_path=db_path, symbols=["000001.SZ"])
+            self.assertEqual(history.loc[0, "high_qfq"], 10.5)
+            self.assertEqual(history.loc[0, "low_qfq"], 9.5)
+
     def test_indicators_command_reads_sqlite_and_emits_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "market.sqlite"
@@ -82,7 +154,14 @@ class TechnicalIndicatorSnapshotTests(unittest.TestCase):
                 {"000001.SZ": [1_000_000 + (position * 1_000) for position in range(len(index))]},
                 index=index,
             )
-            write_daily_market_data(prices, volumes, db_path=db_path, source="test")
+            write_daily_market_data(
+                prices,
+                volumes,
+                high_prices=prices * 1.01,
+                low_prices=prices * 0.99,
+                db_path=db_path,
+                source="test",
+            )
 
             output = io.StringIO()
             with redirect_stdout(output):
@@ -107,6 +186,11 @@ class TechnicalIndicatorSnapshotTests(unittest.TestCase):
                 index[-1].strftime("%Y-%m-%d"),
             )
             self.assertIn("momentum", payload["technical_snapshot"]["available_dimensions"])
+            full_history = payload["technical_snapshot"]["historical_price_structure"]["periods"][
+                "full_available_history"
+            ]
+            self.assertEqual(full_history["historical_high_basis"], "forward_adjusted_intraday_high")
+            self.assertEqual(full_history["historical_high_trade_date"], index[-1].strftime("%Y-%m-%d"))
 
 
 if __name__ == "__main__":

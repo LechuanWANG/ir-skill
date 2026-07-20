@@ -5,6 +5,7 @@ import {
   FileClock,
   FileText,
   FolderArchive,
+  ListChecks,
   RefreshCw,
   Search,
   Settings2,
@@ -18,6 +19,7 @@ export const navigation = [
   { id: 'overview', label: '总览', icon: BarChart3 },
   { id: 'library', label: '集中资料库', icon: FolderArchive },
   { id: 'data', label: '同步数据', icon: Database },
+  { id: 'watchlist', label: '研究跟踪池', icon: ListChecks },
   { id: 'profile', label: '投资风格与交易', icon: SlidersHorizontal },
   { id: 'settings', label: '环境设置', icon: Settings2 },
 ]
@@ -42,7 +44,7 @@ export function Sidebar({ page, onNavigate }) {
       </nav>
       <div className="sidebar-note">
         <Archive size={17} strokeWidth={1.7} />
-        <p>正式报告、归档资料、原始文件、持仓记录和数据缓存均保存在本机，便于持续研究与复盘。</p>
+        <p>正式报告、研究跟踪池、归档资料、持仓记录和数据缓存均保存在本机，便于持续研究与复盘。</p>
       </div>
     </aside>
   )

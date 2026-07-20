@@ -1,0 +1,14 @@
+[project]
+name = "ir-skill"
+version = "1.0.0"
+description = "Local-first, evidence-led investment research tooling"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "pandas>=2.3,<3",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.ir-skill]
+test-command = "python -m unittest discover -s tests -v"

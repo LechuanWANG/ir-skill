@@ -1,0 +1,2 @@
+# Kept in sync with pyproject.toml. Exact pins make local and CI installs reproducible.
+pandas==2.3.3
