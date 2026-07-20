@@ -4,9 +4,10 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 from subprocess import CompletedProcess
+from unittest.mock import patch
 
 import sys
 
@@ -171,12 +172,426 @@ class ResearchCollectTests(unittest.TestCase):
         self.assertEqual([attempt["source"] for attempt in result["attempts"]], ["primary", "cninfo"])
         self.assertEqual(result["attempts"][0]["failure_type"], "source_access_challenge")
 
+    def test_collect_report_reuses_archived_company_report_before_network(self) -> None:
+        archive_dir = self.library_root / "files" / "company" / "长江电力" / "定期报告"
+        archive_dir.mkdir(parents=True)
+        summary = archive_dir / "2026年第一季度报告核验-2026-07-18.md"
+        pdf = archive_dir / "1225262110-2026-07-18.pdf"
+        summary.write_text(
+            "---\n"
+            "title: 2026年第一季度报告核验\n"
+            "source_urls: https://static.cninfo.com.cn/finalpage/2026-04-30/1225262110.PDF\n"
+            "---\n\n"
+            "# 长江电力2026年一季度报告\n\n已核验报告期与合并口径。\n",
+            encoding="utf-8",
+        )
+        pdf.write_bytes(b"%PDF-1.7\narchived report")
+        library.save_catalog(
+            [
+                {
+                    "path": "files/company/长江电力/定期报告/2026年第一季度报告核验-2026-07-18.md",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": "2026年第一季度报告核验",
+                    "extension": "md",
+                },
+                {
+                    "path": "files/company/长江电力/定期报告/1225262110-2026-07-18.pdf",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": "1225262110-2026-07-18",
+                    "extension": "pdf",
+                },
+            ]
+        )
+
+        result = collector.collect_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不应访问网络")),
+        )
+
+        self.assertEqual(result["status"], "reused")
+        self.assertEqual(result["source"], "library")
+        self.assertEqual(result["local_report"]["match_basis"], "company_report_bundle")
+        self.assertEqual(
+            [Path(path).resolve() for path in result["local_report"]["pdf_paths"]],
+            [pdf.resolve()],
+        )
+        self.assertFalse((self.library_root / "staging" / "collection-test" / "raw").exists())
+
+    def test_archived_report_requires_exact_url_when_source_url_is_explicit(self) -> None:
+        archive_dir = self.library_root / "files" / "company" / "长江电力" / "定期报告"
+        archive_dir.mkdir(parents=True)
+        source_url = "https://static.cninfo.com.cn/finalpage/2026-04-30/1225262110.PDF"
+        summary = archive_dir / "2026年第一季度报告核验-2026-07-18.md"
+        pdf = archive_dir / "1225262110-2026-07-18.pdf"
+        summary.write_text(
+            "---\n"
+            "title: 2026年第一季度报告核验\n"
+            f"source_urls: {source_url}\n"
+            "---\n\n"
+            "# 长江电力2026年一季度报告\n",
+            encoding="utf-8",
+        )
+        pdf.write_bytes(b"%PDF-1.7\narchived report")
+        library.save_catalog(
+            [
+                {
+                    "path": "files/company/长江电力/定期报告/2026年第一季度报告核验-2026-07-18.md",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": "2026年第一季度报告核验",
+                    "extension": "md",
+                },
+                {
+                    "path": "files/company/长江电力/定期报告/1225262110-2026-07-18.pdf",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": "1225262110-2026-07-18",
+                    "extension": "pdf",
+                },
+            ]
+        )
+
+        exact = collector.find_local_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            source_url=source_url,
+        )
+        revised = collector.find_local_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            source_url="https://static.cninfo.com.cn/finalpage/2026-05-06/revised.PDF",
+        )
+
+        self.assertIsNotNone(exact)
+        self.assertEqual(exact["match_basis"], "source_url")
+        self.assertIsNone(revised)
+
+    def test_collect_report_reuses_staged_report_and_q1_query_uses_quarter_category(self) -> None:
+        requests = []
+
+        def opener(request: object, **_kwargs: object) -> FakeResponse:
+            requests.append(request)
+            url = request.full_url
+            if url == collector.CNINFO_QUERY_URL:
+                payload = {
+                    "announcements": [
+                        {
+                            "secCode": "600900",
+                            "announcementId": "1225262110",
+                            "announcementTitle": "2026年一季度报告",
+                            "announcementTime": 1,
+                            "adjunctUrl": "finalpage/2026-04-30/1225262110.PDF",
+                        }
+                    ],
+                    "totalRecordNum": 1,
+                }
+                return FakeResponse(json.dumps(payload, ensure_ascii=False).encode("utf-8"), url=url, content_type="application/json")
+            if url == "https://static.cninfo.com.cn/finalpage/2026-04-30/1225262110.PDF":
+                return FakeResponse(b"%PDF-1.7\nquarterly report", url=url, content_type="application/pdf")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        first = collector.collect_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            opener=opener,
+        )
+        second = collector.collect_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不应重复访问网络")),
+        )
+
+        self.assertEqual(first["status"], "collected")
+        self.assertEqual(second["status"], "reused")
+        self.assertEqual(second["source"], "staging")
+        self.assertIn("category=category_yjdbg_szsh", requests[0].data.decode("utf-8"))
+        metadata = json.loads(Path(first["result"]["metadata_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(metadata["financial_report"]["period_year"], 2026)
+        self.assertEqual(metadata["financial_report"]["announcement_id"], "1225262110")
+        raw_files = list((self.library_root / "staging" / "collection-test" / "raw").glob("*.PDF"))
+        self.assertEqual(len(raw_files), 1)
+
+    def test_collect_report_disambiguates_legacy_report_bundle_without_pdf_download(self) -> None:
+        archive_dir = self.library_root / "files" / "company" / "长江电力" / "定期报告"
+        archive_dir.mkdir(parents=True)
+        annual_url = "https://static.cninfo.com.cn/finalpage/2026-04-30/annual.PDF"
+        q1_url = "https://static.cninfo.com.cn/finalpage/2026-04-30/q1.PDF"
+        summary = archive_dir / "2025年年度报告与2026年第一季度报告核验-2026-07-18.md"
+        annual_pdf = archive_dir / "annual-2026-07-18.pdf"
+        q1_pdf = archive_dir / "q1-2026-07-18.pdf"
+        summary.write_text(
+            "---\n"
+            "title: 2025年年度报告与2026年第一季度报告核验\n"
+            f'source_urls: "{annual_url} | {q1_url}"\n'
+            "---\n\n"
+            "# 长江电力2025年年报与2026年一季报核验\n",
+            encoding="utf-8",
+        )
+        annual_pdf.write_bytes(b"%PDF-1.7\nannual report")
+        q1_pdf.write_bytes(b"%PDF-1.7\nquarter report")
+        library.save_catalog(
+            [
+                {
+                    "path": f"files/company/长江电力/定期报告/{summary.name}",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": summary.stem,
+                    "extension": "md",
+                },
+                {
+                    "path": f"files/company/长江电力/定期报告/{annual_pdf.name}",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": annual_pdf.stem,
+                    "extension": "pdf",
+                },
+                {
+                    "path": f"files/company/长江电力/定期报告/{q1_pdf.name}",
+                    "domain": "company",
+                    "subject": "长江电力",
+                    "category": "定期报告",
+                    "date": "2026-07-18",
+                    "title": q1_pdf.stem,
+                    "extension": "pdf",
+                },
+            ]
+        )
+        requests = []
+
+        def opener(request: object, **_kwargs: object) -> FakeResponse:
+            requests.append(request)
+            self.assertEqual(request.full_url, collector.CNINFO_QUERY_URL)
+            payload = {
+                "announcements": [
+                    {
+                        "secCode": "600900",
+                        "announcementId": "q1",
+                        "announcementTitle": "2026年一季度报告",
+                        "announcementTime": 1,
+                        "adjunctUrl": "finalpage/2026-04-30/q1.PDF",
+                    }
+                ],
+                "totalRecordNum": 1,
+            }
+            return FakeResponse(
+                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                url=collector.CNINFO_QUERY_URL,
+                content_type="application/json",
+            )
+
+        result = collector.collect_financial_report(
+            task_id="collection-test",
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            primary_url="https://exchange.example/q1-report.pdf",
+            opener=opener,
+        )
+
+        self.assertEqual(result["status"], "reused")
+        self.assertEqual(result["local_report"]["match_basis"], "source_url")
+        self.assertEqual([Path(path).resolve() for path in result["local_report"]["pdf_paths"]], [q1_pdf.resolve()])
+        self.assertEqual(len(requests), 1)
+        self.assertFalse((self.library_root / "staging" / "collection-test" / "raw").exists())
+
     def test_matches_interim_and_third_quarter_reports(self) -> None:
         self.assertTrue(collector.cninfo_report_type_matches("2025年度报告", "annual"))
+        self.assertTrue(collector.cninfo_report_type_matches("2026年一季度报告", "q1"))
         self.assertTrue(collector.cninfo_report_type_matches("2025年半年度报告", "q2"))
         self.assertTrue(collector.cninfo_report_type_matches("2025年第三季度报告", "q3"))
         self.assertFalse(collector.cninfo_report_type_matches("2025年度报告摘要", "annual"))
         self.assertFalse(collector.cninfo_report_type_matches("2025年半年度报告摘要", "q2"))
+
+    def test_cninfo_periodic_report_queries_use_specific_categories(self) -> None:
+        categories = {
+            "annual": "category_ndbg_szsh",
+            "q1": "category_yjdbg_szsh",
+            "q2": "category_bndbg_szsh",
+            "q3": "category_sjdbg_szsh",
+        }
+        titles = {
+            "annual": "2025年年度报告",
+            "q1": "2026年第一季度报告",
+            "q2": "2026年半年度报告",
+            "q3": "2026年第三季度报告",
+        }
+
+        for report_type, category in categories.items():
+            with self.subTest(report_type=report_type):
+                requests = []
+                response = FakeResponse(
+                    json.dumps(
+                        {
+                            "announcements": [
+                                {
+                                    "secCode": "600900",
+                                    "announcementId": report_type,
+                                    "announcementTitle": titles[report_type],
+                                    "announcementTime": 1,
+                                    "adjunctUrl": f"finalpage/2026-01-01/{report_type}.PDF",
+                                }
+                            ],
+                            "totalRecordNum": 1,
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    url=collector.CNINFO_QUERY_URL,
+                    content_type="application/json",
+                )
+                result = collector.discover_cninfo_reports(
+                    symbol="600900",
+                    company_name="长江电力",
+                    start_date="2026-01-01",
+                    end_date="2026-12-31",
+                    report_type=report_type,
+                    opener=lambda request, **_kwargs: (requests.append(request), response)[1],
+                )
+
+                self.assertEqual(result["status"], "found")
+                self.assertIn(f"category={category}", requests[0].data.decode("utf-8"))
+
+    def test_cninfo_discovery_excludes_wrong_report_year(self) -> None:
+        response = FakeResponse(
+            json.dumps(
+                {
+                    "announcements": [
+                        {
+                            "secCode": "600900",
+                            "announcementId": "old",
+                            "announcementTitle": "2025年第一季度报告",
+                            "announcementTime": 1,
+                            "adjunctUrl": "finalpage/2026-04-01/old.PDF",
+                        },
+                        {
+                            "secCode": "600900",
+                            "announcementId": "current",
+                            "announcementTitle": "2026年一季度报告",
+                            "announcementTime": 2,
+                            "adjunctUrl": "finalpage/2026-04-30/current.PDF",
+                        },
+                    ],
+                    "totalRecordNum": 2,
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            url=collector.CNINFO_QUERY_URL,
+            content_type="application/json",
+        )
+
+        result = collector.discover_cninfo_reports(
+            symbol="600900",
+            company_name="长江电力",
+            start_date="2026-04-01",
+            end_date="2026-05-05",
+            report_type="q1",
+            opener=lambda *_args, **_kwargs: response,
+        )
+
+        self.assertEqual([report["announcement_id"] for report in result["reports"]], ["current"])
+
+    def test_collect_report_does_not_download_when_legacy_bundle_stays_ambiguous(self) -> None:
+        ambiguous = {
+            "location": "library",
+            "match_basis": "company_report_bundle_ambiguous",
+            "ambiguous": True,
+            "pdf_paths": ["annual.pdf", "q1.pdf"],
+            "source_urls": [],
+        }
+        discovery = {
+            "status": "found",
+            "reports": [
+                {
+                    "title": "2026年一季度报告",
+                    "announcement_id": "q1",
+                    "announcement_time": 1,
+                    "source_url": "https://static.cninfo.com.cn/finalpage/2026-04-30/q1.PDF",
+                }
+            ],
+        }
+        with patch.object(
+            collector,
+            "find_local_financial_report",
+            side_effect=[ambiguous, None, ambiguous],
+        ), patch.object(collector, "discover_cninfo_reports", return_value=discovery), patch.object(
+            collector,
+            "collect_source",
+        ) as collect_source:
+            result = collector.collect_financial_report(
+                task_id="collection-test",
+                symbol="600900",
+                company_name="长江电力",
+                start_date="2026-04-01",
+                end_date="2026-05-05",
+                report_type="q1",
+                primary_url="https://exchange.example/q1-report.pdf",
+            )
+
+        self.assertEqual(result["status"], "needs_source_resolution")
+        self.assertEqual(result["local_candidate"]["match_basis"], "company_report_bundle_ambiguous")
+        collect_source.assert_not_called()
+
+    def test_collect_report_cli_treats_reused_as_success(self) -> None:
+        argv = [
+            "research_collect.py",
+            "collect-report",
+            "--task",
+            "collection-test",
+            "--symbol",
+            "600900",
+            "--company-name",
+            "长江电力",
+            "--start-date",
+            "2026-04-01",
+            "--end-date",
+            "2026-05-05",
+            "--report-type",
+            "q1",
+        ]
+        with patch.object(sys, "argv", argv), patch.object(
+            collector,
+            "collect_financial_report",
+            return_value={"status": "reused", "source": "library"},
+        ), redirect_stdout(io.StringIO()):
+            exit_code = collector.main()
+
+        self.assertEqual(exit_code, 0)
 
     def test_collects_html_and_archives_agent_authored_summary(self) -> None:
         response = FakeResponse(
@@ -213,9 +628,10 @@ class ResearchCollectTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        summary = library.archive_staged_task("collection-test", apply=True)
+        with patch.object(library, "current_archive_date", return_value="2026-07-19"):
+            summary = library.archive_staged_task("collection-test", apply=True)
 
-        archived = self.library_root / "files" / "macro" / "官方统计" / "统计数据" / "官方发布摘要-2026-07-17.md"
+        archived = self.library_root / "files" / "macro" / "官方统计" / "统计数据" / "官方发布摘要-2026-07-19.md"
         self.assertEqual(summary["documents_created_or_merged"], 1)
         self.assertTrue(archived.is_file())
         self.assertIn("https://stats.example/release", archived.read_text(encoding="utf-8"))

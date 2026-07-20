@@ -3,29 +3,30 @@
   <desc id="desc">TuShare 数据、原始披露和研究输入先经过任务暂存、校验和归档决策，再分别进入 SQLite 数据层、可复用资料库、正式报告和 LLM Wiki，最终由 Research Hub 和按授权运行的 Codex Agent 复用。</desc>
   <defs>
     <style>
-      .bg { fill: #f8fafc; }
-      .ink { fill: #172033; }
-      .muted { fill: #52637a; }
+      .bg { fill: #07111f; }
+      .ink { fill: #f4f8ff; }
+      .muted { fill: #9aabc2; }
       .title { font: 700 40px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; letter-spacing: 1px; }
       .subtitle { font: 500 21px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
       .section { font: 700 27px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
       .label { font: 700 24px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
       .body { font: 500 18px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
       .small { font: 500 17px 'PingFang SC', 'Noto Sans CJK SC', Arial, sans-serif; }
-      .card { fill: #ffffff; stroke: #d7e0eb; stroke-width: 2; }
-      .line { fill: none; stroke: #8ca0ba; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .card { fill: #0d1d2f; stroke: #27415d; stroke-width: 2; }
+      .line { fill: none; stroke: #5d7898; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .trunk { fill: none; stroke: #496681; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
     </style>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7.5" refY="5" orient="auto">
-      <path d="M1,1 L8.5,5 L1,9 Z" fill="#8ca0ba"/>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6.1" refY="3.5" orient="auto">
+      <path d="M0.8,0.8 L6.3,3.5 L0.8,6.2 Z" fill="#5d7898"/>
     </marker>
   </defs>
 
   <rect class="bg" width="1200" height="1180" rx="24"/>
   <g transform="translate(48 47) scale(0.92)">
-  <rect x="40" y="34" width="1120" height="104" rx="18" fill="#10233f"/>
+  <rect x="40" y="34" width="1120" height="104" rx="18" fill="#10243c" stroke="#24445f" stroke-width="2"/>
   <text x="74" y="80" class="title" fill="#ffffff">一次采集，多层沉淀，按用途复用</text>
-  <text x="74" y="114" class="subtitle" fill="#c9d8ec">数据、原件、正式报告和 Wiki 不再散落在临时目录或聊天记录里</text>
-  <rect x="912" y="62" width="202" height="42" rx="21" fill="#168274"/>
+  <text x="74" y="114" class="subtitle" fill="#b5c8de">数据、原件、正式报告和 Wiki 不再散落在临时目录或聊天记录里</text>
+  <rect x="912" y="62" width="202" height="42" rx="21" fill="#0d625f" stroke="#188d86" stroke-width="1.5"/>
   <text x="1013" y="90" text-anchor="middle" class="small" fill="#ffffff">本地优先 · 默认不上传</text>
 
   <text x="42" y="180" class="section ink">1. 每一种来源先进入可恢复的任务链路</text>
@@ -49,17 +50,20 @@
   <path class="line" d="M600 316 L600 392"/>
   <path class="line" d="M984 316 L984 344 L730 344 L730 392"/>
 
-  <rect x="300" y="392" width="600" height="134" rx="20" fill="#edf5ff" stroke="#91b8ee" stroke-width="2"/>
+  <rect x="300" y="392" width="600" height="134" rx="20" fill="#102b45" stroke="#3b78ad" stroke-width="2"/>
   <text x="600" y="438" text-anchor="middle" class="label ink">任务暂存、校验与归档决策</text>
   <text x="600" y="470" text-anchor="middle" class="body muted">staging/&lt;task&gt;/raw/ · 核验来源、文件与状态</text>
-  <text x="600" y="498" text-anchor="middle" class="small" fill="#2563eb">archive-plan 覆盖每个原件；完成后任务冻结</text>
+  <text x="600" y="498" text-anchor="middle" class="small" fill="#66b8ff">archive-plan 覆盖每个原件；完成后任务冻结</text>
 
   <text x="42" y="614" class="section ink">2. 将信息存成四类可调用资产</text>
 
-  <path class="line" d="M600 526 L600 568 L310 568 L310 650"/>
-  <path class="line" d="M600 526 L600 568 L890 568 L890 650"/>
-  <path class="line" d="M600 526 L600 818 L310 818 L310 836"/>
-  <path class="line" d="M600 526 L600 818 L890 818 L890 836"/>
+  <path class="trunk" d="M600 526 V808"/>
+  <path class="line" d="M600 590 H310 V650"/>
+  <path class="line" d="M600 590 H890 V650"/>
+  <path class="line" d="M600 808 H310 V836"/>
+  <path class="line" d="M600 808 H890 V836"/>
+  <circle cx="600" cy="590" r="4.5" fill="#5d7898"/>
+  <circle cx="600" cy="808" r="4.5" fill="#5d7898"/>
 
   <rect class="card" x="60" y="650" width="500" height="140" rx="18"/>
   <rect x="60" y="650" width="500" height="10" rx="5" fill="#0f766e"/>
@@ -91,8 +95,8 @@
 
   <path class="line" d="M600 976 L600 1054"/>
 
-  <rect x="150" y="1054" width="900" height="82" rx="20" fill="#172033"/>
+  <rect x="150" y="1054" width="900" height="82" rx="20" fill="#10243c" stroke="#2d5878" stroke-width="2"/>
   <text x="600" y="1087" text-anchor="middle" class="label" fill="#ffffff">Research Hub + 按授权运行的 Codex Agent</text>
-  <text x="600" y="1115" text-anchor="middle" class="small" fill="#c9d8ec">按当前问题读取需要的资产；研究越做，资料越可复用</text>
+  <text x="600" y="1115" text-anchor="middle" class="small" fill="#b5c8de">按当前问题读取需要的资产；研究越做，资料越可复用</text>
   </g>
 </svg>

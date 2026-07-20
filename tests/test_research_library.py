@@ -112,6 +112,57 @@ class WikiQueueRawCopyTests(unittest.TestCase):
         self.assertEqual(records[0]["path"], "company/示例公司/示例研究报告-2026-07-16.md")
         self.assertEqual(library.record_preview(records[0])["kind"], "text")
 
+    def test_system_metadata_is_excluded_from_reports_and_catalog(self) -> None:
+        report_metadata = self.report_root / "market" / ".DS_Store"
+        report_metadata.parent.mkdir(parents=True, exist_ok=True)
+        report_metadata.write_bytes(b"finder metadata")
+        library_metadata = self.library_files / "company" / "示例公司" / "公告" / ".DS_Store"
+        library_metadata.parent.mkdir(parents=True, exist_ok=True)
+        library_metadata.write_bytes(b"finder metadata")
+        metadata_record = {
+            **self.record,
+            "id": "finder-metadata",
+            "path": str(library_metadata.relative_to(self.library_root)),
+            "title": ".DS_Store",
+            "extension": "",
+        }
+        library.save_catalog([self.record, metadata_record])
+
+        self.assertEqual(library.list_reports(), [])
+        self.assertEqual([record["id"] for record in library.list_records()], [self.record["id"]])
+
+    def test_curation_removes_system_metadata_from_temporary_sources(self) -> None:
+        source_dir = self.library_files / "company" / "示例公司" / "2026-07-16" / "temporary_source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        metadata = source_dir / ".DS_Store"
+        metadata.write_bytes(b"finder metadata")
+
+        summary = library.curate_temporary_sources(apply=True)
+
+        self.assertEqual(summary["system_metadata_files"], 1)
+        self.assertEqual(summary["system_metadata_files_removed"], 1)
+        self.assertFalse(metadata.exists())
+
+    def test_report_list_displays_archive_date_without_losing_market_as_of(self) -> None:
+        report = self.report_root / "market" / "2026-07-19" / "2026-07-19-日期分离测试.md"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            "---\n"
+            "title: 日期分离测试\n"
+            "domain: market\n"
+            "subject: A股\n"
+            "as_of: 2026-07-17\n"
+            "archived_on: 2026-07-19\n"
+            "---\n\n"
+            "# 日期分离测试\n",
+            encoding="utf-8",
+        )
+
+        record = library.report_record_from_path(report)
+
+        self.assertEqual(record["date"], "2026-07-19")
+        self.assertEqual(record["as_of"], "2026-07-17")
+
     def test_report_migration_removes_library_catalog_entry(self) -> None:
         legacy_report = self.library_files / "company" / "示例公司" / "研究报告" / "示例研究报告-2026-07-16.md"
         legacy_report.parent.mkdir(parents=True, exist_ok=True)
@@ -330,7 +381,8 @@ class ResearchTaskStateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        result = library.complete_research_task("complete-and-archive")
+        with patch.object(library, "current_archive_date", return_value="2026-07-19"):
+            result = library.complete_research_task("complete-and-archive")
 
         self.assertEqual(result["task_state"]["status"], "completed")
         self.assertEqual(result["archive"]["pdf_sources_archived"], 1)
@@ -340,6 +392,15 @@ class ResearchTaskStateTests(unittest.TestCase):
         archived_pdfs = list((self.library_root / "files").rglob("*.pdf"))
         self.assertEqual(len(archived_pdfs), 1)
         self.assertEqual(archived_pdfs[0].read_bytes(), b"%PDF-1.7\noriginal disclosure")
+        self.assertIn("2026-07-19", archived_pdfs[0].name)
+        archived_document = next(
+            path
+            for path in (self.library_root / "files").rglob("*.md")
+            if path.name != library.FILES_INDEX_NAME
+        )
+        metadata = library.parse_frontmatter(archived_document)
+        self.assertEqual(metadata["as_of"], "2026-07-17")
+        self.assertEqual(metadata["archived_on"], "2026-07-19")
 
     def test_complete_refuses_unplanned_raw_sources_and_keeps_task_active(self) -> None:
         library.init_research_task("unplanned-completion", title="未规划资料不能完成")
@@ -353,6 +414,22 @@ class ResearchTaskStateTests(unittest.TestCase):
 
         self.assertEqual(library.load_research_task("unplanned-completion")["status"], "active")
         self.assertTrue(raw_path.is_file())
+
+    def test_archive_rejects_a_market_date_in_archived_on(self) -> None:
+        document = {
+            "domain": "company",
+            "subject": "日期分离测试",
+            "category": "公告",
+            "title": "公告摘要",
+            "as_of": "2026-07-17",
+            "archived_on": "2026-07-17",
+            "content": "已人工审阅公告原件并记录可复用事实。",
+            "source_files": ["raw/release.html"],
+        }
+
+        with patch.object(library, "current_archive_date", return_value="2026-07-19"):
+            with self.assertRaisesRegex(ValueError, "执行归档当天"):
+                library.normalized_plan_document("date-separation", document)
 
     def test_archive_rejects_any_uncovered_raw_source(self) -> None:
         library.init_research_task("uncovered-source", title="遗漏来源")

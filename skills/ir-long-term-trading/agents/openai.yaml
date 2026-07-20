@@ -1,0 +1,4 @@
+interface:
+  display_name: "IR Long-Term"
+  short_description: "Long-horizon fundamental investment research"
+  default_prompt: "Use $ir-long-term-trading for evidence-led long-horizon investment research."

@@ -35,6 +35,7 @@ from research_library import (
     record_preview,
     save_profile,
 )
+from research_watchlist import read_watchlist, replace_watchlist, watchlist_path
 from tushare_config import (
     DEFAULT_ENV_PATH as TUSHARE_ENV_PATH,
     read_env_values as read_config_values,
@@ -63,6 +64,10 @@ TABLE_LABELS = {
     "market_daily_info": "市场日度概况",
     "market_moneyflow": "市场资金流",
     "market_margin": "市场两融",
+    "market_sector_master": "板块字典",
+    "market_sector_daily": "板块日线行情",
+    "market_sector_flow_daily": "板块资金流",
+    "sector_membership_daily": "板块成分快照",
     "tushare_research_observation": "研究观察原始缓存",
     "tushare_capability": "接口可用性记录",
 }
@@ -70,6 +75,7 @@ HIDDEN_UI_TABLES = {"tushare_research_observation"}
 TABLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 LATEST_SYNC_TABLES = ("a_share_daily", "a_share_daily_basic")
 DATA_SYNC_LOCK = Lock()
+WATCHLIST_PATH = watchlist_path(PROJECT_ROOT)
 DATA_SYNC_STATUS: dict[str, object] = {
     "state": "idle",
     "message": "可同步个股日线、估值与股票基础信息。",
@@ -319,75 +325,119 @@ class ResearchHubHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        try:
-            if parsed.path == "/api/overview":
-                self.handle_overview()
-            elif parsed.path == "/api/records":
-                self.handle_records(parse_qs(parsed.query))
-            elif parsed.path.startswith("/api/records/") and parsed.path.endswith("/preview"):
-                self.handle_record_preview(parsed.path.split("/")[3])
-            elif parsed.path == "/api/wiki-records":
-                json_response(self, HTTPStatus.OK, {"records": wiki_records()})
-            elif parsed.path.startswith("/api/wiki-records/") and parsed.path.endswith("/preview"):
-                json_response(self, HTTPStatus.OK, wiki_preview(parsed.path.split("/")[3]))
-            elif parsed.path == "/api/data/tables":
-                json_response(self, HTTPStatus.OK, {"database_path": str(LIBRARY_DATABASE.relative_to(PROJECT_ROOT)), "tables": database_tables()})
-            elif parsed.path == "/api/data/sync":
-                json_response(self, HTTPStatus.OK, {"sync": data_sync_status()})
-            elif parsed.path.startswith("/api/data/tables/"):
-                json_response(self, HTTPStatus.OK, database_preview(unquote(parsed.path.rsplit("/", 1)[-1])))
-            elif parsed.path == "/api/profile":
-                json_response(self, HTTPStatus.OK, get_profile())
-            elif parsed.path == "/api/settings":
-                self.handle_settings()
-            else:
-                self.serve_static(parsed.path)
-        except FileNotFoundError as exc:
-            json_response(self, HTTPStatus.NOT_FOUND, {"error": str(exc)})
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        self.dispatch_request("GET")
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        try:
-            if parsed.path.startswith("/api/records/") and parsed.path.endswith("/wiki-queue"):
-                record = enqueue_wiki_ingest(parsed.path.split("/")[3])
-                json_response(self, HTTPStatus.OK, {"record": record, "message": "已加入待沉淀队列，原件已复制到 Wiki Raw。"})
-            elif parsed.path.startswith("/api/records/") and parsed.path.endswith("/trash"):
-                result = move_record_to_trash(parsed.path.split("/")[3])
-                json_response(self, HTTPStatus.OK, {"message": "资料已移至集中数据层回收区。", **result})
-            elif parsed.path == "/api/profile":
-                json_response(self, HTTPStatus.OK, save_profile(read_request_json(self)))
-            elif parsed.path == "/api/settings":
-                self.save_settings(read_request_json(self))
-            elif parsed.path == "/api/data/sync":
-                status, started = start_data_sync()
-                json_response(
-                    self,
-                    HTTPStatus.ACCEPTED if started else HTTPStatus.OK,
-                    {"sync": status, "started": started},
-                )
-            else:
-                json_response(self, HTTPStatus.NOT_FOUND, {"error": "未找到接口"})
-        except FileNotFoundError as exc:
-            json_response(self, HTTPStatus.NOT_FOUND, {"error": str(exc)})
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        self.dispatch_request("POST")
 
     def do_DELETE(self) -> None:
+        self.dispatch_request("DELETE")
+
+    def dispatch_request(self, method: str) -> None:
         parsed = urlparse(self.path)
         try:
-            if parsed.path.startswith("/api/records/") and parsed.path.endswith("/wiki-queue"):
-                result = cancel_wiki_ingest(parsed.path.split("/")[3])
-                message = "已取消待沉淀队列。"
-                if result["raw_removed"]:
-                    message = "已取消待沉淀队列，并移除本次创建的 Wiki Raw 副本。"
-                json_response(self, HTTPStatus.OK, {"message": message, **result})
-            else:
-                json_response(self, HTTPStatus.NOT_FOUND, {"error": "未找到接口"})
-        except (OSError, ValueError) as exc:
+            if self.dispatch_api(method, parsed):
+                return
+            if method == "GET" and not parsed.path.startswith("/api/"):
+                self.serve_static(parsed.path)
+                return
+            json_response(self, HTTPStatus.NOT_FOUND, {"error": "未找到接口"})
+        except FileNotFoundError as exc:
+            json_response(self, HTTPStatus.NOT_FOUND, {"error": str(exc)})
+        except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
             json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+    def dispatch_api(self, method: str, parsed) -> bool:
+        if method == "GET":
+            return self.dispatch_get_api(parsed)
+        if method == "POST":
+            return self.dispatch_post_api(parsed)
+        if method == "DELETE":
+            return self.dispatch_delete_api(parsed)
+        return False
+
+    def dispatch_get_api(self, parsed) -> bool:
+        handlers = {
+            "/api/overview": self.handle_overview,
+            "/api/records": lambda: self.handle_records(parse_qs(parsed.query)),
+            "/api/wiki-records": lambda: json_response(self, HTTPStatus.OK, {"records": wiki_records()}),
+            "/api/data/tables": lambda: json_response(
+                self,
+                HTTPStatus.OK,
+                {"database_path": str(LIBRARY_DATABASE.relative_to(PROJECT_ROOT)), "tables": database_tables()},
+            ),
+            "/api/data/sync": lambda: json_response(self, HTTPStatus.OK, {"sync": data_sync_status()}),
+            "/api/profile": lambda: json_response(self, HTTPStatus.OK, get_profile()),
+            "/api/watchlist": lambda: json_response(self, HTTPStatus.OK, read_watchlist(WATCHLIST_PATH)),
+            "/api/settings": self.handle_settings,
+        }
+        handler = handlers.get(parsed.path)
+        if handler is not None:
+            handler()
+            return True
+        record_id = self.path_resource_id(parsed.path, "/api/records/", "/preview")
+        if record_id is not None:
+            self.handle_record_preview(record_id)
+            return True
+        wiki_id = self.path_resource_id(parsed.path, "/api/wiki-records/", "/preview")
+        if wiki_id is not None:
+            json_response(self, HTTPStatus.OK, wiki_preview(wiki_id))
+            return True
+        if parsed.path.startswith("/api/data/tables/"):
+            table_name = unquote(parsed.path.rsplit("/", 1)[-1])
+            json_response(self, HTTPStatus.OK, database_preview(table_name))
+            return True
+        return False
+
+    def dispatch_post_api(self, parsed) -> bool:
+        record_id = self.path_resource_id(parsed.path, "/api/records/", "/wiki-queue")
+        if record_id is not None:
+            record = enqueue_wiki_ingest(record_id)
+            json_response(self, HTTPStatus.OK, {"record": record, "message": "已加入待沉淀队列，原件已复制到 Wiki Raw。"})
+            return True
+        record_id = self.path_resource_id(parsed.path, "/api/records/", "/trash")
+        if record_id is not None:
+            result = move_record_to_trash(record_id)
+            json_response(self, HTTPStatus.OK, {"message": "资料已移至集中数据层回收区。", **result})
+            return True
+        if parsed.path == "/api/profile":
+            json_response(self, HTTPStatus.OK, save_profile(read_request_json(self)))
+            return True
+        if parsed.path == "/api/watchlist":
+            json_response(self, HTTPStatus.OK, replace_watchlist(WATCHLIST_PATH, read_request_json(self)))
+            return True
+        if parsed.path == "/api/settings":
+            self.save_settings(read_request_json(self))
+            return True
+        if parsed.path == "/api/data/sync":
+            status, started = start_data_sync()
+            json_response(
+                self,
+                HTTPStatus.ACCEPTED if started else HTTPStatus.OK,
+                {"sync": status, "started": started},
+            )
+            return True
+        return False
+
+    def dispatch_delete_api(self, parsed) -> bool:
+        record_id = self.path_resource_id(parsed.path, "/api/records/", "/wiki-queue")
+        if record_id is None:
+            return False
+        result = cancel_wiki_ingest(record_id)
+        message = "已取消待沉淀队列。"
+        if result["raw_removed"]:
+            message = "已取消待沉淀队列，并移除本次创建的 Wiki Raw 副本。"
+        json_response(self, HTTPStatus.OK, {"message": message, **result})
+        return True
+
+    @staticmethod
+    def path_resource_id(path: str, prefix: str, suffix: str) -> str | None:
+        if not path.startswith(prefix) or not path.endswith(suffix):
+            return None
+        value = path[len(prefix) : len(path) - len(suffix)].strip("/")
+        if not value or "/" in value:
+            return None
+        return unquote(value)
 
     def handle_overview(self) -> None:
         records = list_records()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,6 +40,7 @@ DATE_FMT = "%Y%m%d"
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_DAYS_PER_CHUNK = 5
 DEFAULT_SLEEP_SECONDS = 0.15
+TUSHARE_API_URL = "https://api.tushare.pro"
 DAILY_BASIC_FIELDS = (
     "ts_code,trade_date,close,turnover_rate,volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,"
     "dv_ratio,dv_ttm,total_mv,circ_mv,total_share,float_share,free_share"
@@ -66,6 +68,89 @@ class SyncConfig:
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
 
 
+@dataclass(frozen=True)
+class ForwardAdjustedDailyFrames:
+    """Forward-adjusted daily price matrices returned by one TuShare sync window."""
+
+    close: pd.DataFrame
+    high: pd.DataFrame
+    low: pd.DataFrame
+    volume: pd.DataFrame
+
+
+class TushareHttpClient:
+    """Small TuShare Pro client using the public JSON API and standard library only."""
+
+    def __init__(
+        self,
+        token: str,
+        *,
+        api_url: str = TUSHARE_API_URL,
+        timeout_seconds: float = 30.0,
+        opener=urllib.request.urlopen,
+    ) -> None:
+        self._token = token
+        self._api_url = api_url
+        self._timeout_seconds = timeout_seconds
+        self._opener = opener
+
+    def __getattr__(self, endpoint: str):
+        if endpoint.startswith("_") or not endpoint.isidentifier():
+            raise AttributeError(endpoint)
+
+        def request(**params: object) -> pd.DataFrame:
+            return self._request(endpoint, params)
+
+        return request
+
+    def _request(self, endpoint: str, params: Mapping[str, object]) -> pd.DataFrame:
+        request_params = dict(params)
+        fields = request_params.pop("fields", None)
+        payload: dict[str, object] = {
+            "api_name": endpoint,
+            "token": self._token,
+            "params": request_params,
+        }
+        if fields is not None:
+            payload["fields"] = fields
+        request = urllib.request.Request(
+            self._api_url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        response = None
+        try:
+            response = self._opener(request, timeout=self._timeout_seconds)
+            raw_payload = response.read()
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+        try:
+            response_payload = json.loads(raw_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' returned invalid JSON") from exc
+        if not isinstance(response_payload, Mapping):
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' returned an invalid response object")
+        code = response_payload.get("code")
+        if code != 0:
+            message = str(response_payload.get("msg") or "unknown API error")
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' failed (code={code}): {message}")
+        data = response_payload.get("data")
+        if data is None:
+            return pd.DataFrame()
+        if not isinstance(data, Mapping):
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' returned an invalid data payload")
+        columns = data.get("fields", [])
+        rows = data.get("items", [])
+        if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' returned invalid field metadata")
+        if not isinstance(rows, list):
+            raise RuntimeError(f"TuShare endpoint '{endpoint}' returned invalid row data")
+        return pd.DataFrame(rows, columns=columns)
+
+
 def _read_env_value(path: Path, key: str) -> str:
     return read_env_values(path).get(key, "")
 
@@ -85,7 +170,7 @@ def get_tushare_token(
 
 def create_tushare_client(*, env_path: Path | None = None):
     token = get_tushare_token(env_path=env_path)
-    return _load_tushare().pro_api(token)
+    return TushareHttpClient(token)
 
 
 def chunk_date_range(start_date: str, end_date: str, days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK) -> list[tuple[str, str]]:
@@ -114,19 +199,89 @@ def chunk_symbols(symbols: Sequence[str], batch_size: int = DEFAULT_BATCH_SIZE) 
         yield clean[index:index + batch_size]
 
 
-def _load_tushare():
-    try:
-        import tushare as ts  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("Install tushare to run sync-daily: pip install tushare") from exc
-    return ts
-
-
-def list_active_symbols(pro) -> list[str]:
-    frame = pro.stock_basic(list_status="L", fields="ts_code")
+def list_active_symbols(pro, *, request_policy: TushareRequestPolicy | None = None) -> list[str]:
+    frame = request_endpoint(
+        pro,
+        "stock_basic",
+        {"list_status": "L", "fields": "ts_code"},
+        policy=request_policy,
+    )
     if frame.empty:
         return []
     return frame["ts_code"].dropna().astype(str).tolist()
+
+
+def fetch_daily_ohlcv_with_adjustment(
+    pro,
+    symbols: Sequence[str],
+    start_date: str,
+    end_date: str,
+    *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK,
+    sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
+    request_policy: TushareRequestPolicy | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch daily OHLCV and convert close, high, and low to a forward-adjusted basis."""
+    price_frames: list[pd.DataFrame] = []
+    adjust_frames: list[pd.DataFrame] = []
+    policy = request_policy or TushareRequestPolicy()
+
+    for date_start, date_end in chunk_date_range(start_date, end_date, days_per_chunk):
+        for batch in chunk_symbols(symbols, batch_size):
+            codes = ",".join(batch)
+            daily = request_endpoint(
+                pro,
+                "daily",
+                {
+                    "ts_code": codes,
+                    "start_date": date_start,
+                    "end_date": date_end,
+                    "fields": "ts_code,trade_date,close,high,low,vol",
+                },
+                policy=policy,
+            )
+            adjustment = request_endpoint(
+                pro,
+                "adj_factor",
+                {"ts_code": codes, "start_date": date_start, "end_date": date_end},
+                policy=policy,
+            )
+            if not daily.empty:
+                price_frames.append(daily)
+            if not adjustment.empty:
+                adjust_frames.append(adjustment)
+            time.sleep(sleep_seconds)
+
+    if not price_frames or not adjust_frames:
+        return ForwardAdjustedDailyFrames(
+            close=pd.DataFrame(),
+            high=pd.DataFrame(),
+            low=pd.DataFrame(),
+            volume=pd.DataFrame(),
+        )
+
+    raw = pd.concat(price_frames, ignore_index=True).drop_duplicates()
+    adj = pd.concat(adjust_frames, ignore_index=True).drop_duplicates()
+    raw["trade_date"] = pd.to_datetime(raw["trade_date"])
+    adj["trade_date"] = pd.to_datetime(adj["trade_date"])
+
+    close = raw.pivot(index="trade_date", columns="ts_code", values="close").sort_index()
+    high = raw.pivot(index="trade_date", columns="ts_code", values="high").sort_index()
+    low = raw.pivot(index="trade_date", columns="ts_code", values="low").sort_index()
+    volume = raw.pivot(index="trade_date", columns="ts_code", values="vol").sort_index()
+    adj_factor = adj.pivot(index="trade_date", columns="ts_code", values="adj_factor").sort_index()
+
+    last_adjustment = adj_factor.ffill().iloc[-1]
+    adjusted_close = (close * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
+    adjusted_high = (high * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
+    adjusted_low = (low * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
+    return ForwardAdjustedDailyFrames(
+        close=adjusted_close,
+        high=adjusted_high,
+        low=adjusted_low,
+        volume=volume,
+    )
 
 
 def fetch_daily_with_adjustment(
@@ -138,47 +293,30 @@ def fetch_daily_with_adjustment(
     batch_size: int = DEFAULT_BATCH_SIZE,
     days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK,
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
+    request_policy: TushareRequestPolicy | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fetch close/volume and convert close prices to forward-adjusted matrix."""
-    price_frames: list[pd.DataFrame] = []
-    adjust_frames: list[pd.DataFrame] = []
-
-    for date_start, date_end in chunk_date_range(start_date, end_date, days_per_chunk):
-        for batch in chunk_symbols(symbols, batch_size):
-            codes = ",".join(batch)
-            daily = pro.daily(
-                ts_code=codes,
-                start_date=date_start,
-                end_date=date_end,
-                fields="ts_code,trade_date,close,vol",
-            )
-            adjustment = pro.adj_factor(ts_code=codes, start_date=date_start, end_date=date_end)
-            if not daily.empty:
-                price_frames.append(daily)
-            if not adjustment.empty:
-                adjust_frames.append(adjustment)
-            time.sleep(sleep_seconds)
-
-    if not price_frames or not adjust_frames:
-        return pd.DataFrame(), pd.DataFrame()
-
-    raw = pd.concat(price_frames, ignore_index=True).drop_duplicates()
-    adj = pd.concat(adjust_frames, ignore_index=True).drop_duplicates()
-    raw["trade_date"] = pd.to_datetime(raw["trade_date"])
-    adj["trade_date"] = pd.to_datetime(adj["trade_date"])
-
-    close = raw.pivot(index="trade_date", columns="ts_code", values="close").sort_index()
-    volume = raw.pivot(index="trade_date", columns="ts_code", values="vol").sort_index()
-    adj_factor = adj.pivot(index="trade_date", columns="ts_code", values="adj_factor").sort_index()
-
-    last_adjustment = adj_factor.ffill().iloc[-1]
-    adjusted_close = (close * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
-    return adjusted_close, volume
+    """Return the legacy close/volume subset of the forward-adjusted daily data."""
+    daily = fetch_daily_ohlcv_with_adjustment(
+        pro,
+        symbols,
+        start_date,
+        end_date,
+        batch_size=batch_size,
+        days_per_chunk=days_per_chunk,
+        sleep_seconds=sleep_seconds,
+        request_policy=request_policy,
+    )
+    return daily.close, daily.volume
 
 
-def fetch_stock_basic(pro) -> pd.DataFrame:
+def fetch_stock_basic(pro, *, request_policy: TushareRequestPolicy | None = None) -> pd.DataFrame:
     """Fetch listed A-share stock metadata."""
-    return pro.stock_basic(list_status="L", fields=STOCK_BASIC_FIELDS)
+    return request_endpoint(
+        pro,
+        "stock_basic",
+        {"list_status": "L", "fields": STOCK_BASIC_FIELDS},
+        policy=request_policy,
+    )
 
 
 def fetch_daily_basic(
@@ -190,6 +328,8 @@ def fetch_daily_basic(
     batch_size: int = DEFAULT_BATCH_SIZE,
     days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK,
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
+    request_policy: TushareRequestPolicy | None = None,
+    failures: list[dict[str, object]] | None = None,
 ) -> pd.DataFrame:
     """Fetch TuShare daily_basic rows by trade date.
 
@@ -199,25 +339,39 @@ def fetch_daily_basic(
     at a time instead.
     """
     frames: list[pd.DataFrame] = []
+    policy = request_policy or TushareRequestPolicy()
     for date_start, date_end in chunk_date_range(start_date, end_date, days_per_chunk):
-        for trade_date in pd.date_range(date_start, date_end, freq="D"):
+        for trade_date in pd.date_range(date_start, date_end, freq="B"):
             trade_date_text = trade_date.strftime(DATE_FMT)
             if symbols is None:
-                frame = pro.daily_basic(
-                    trade_date=trade_date_text,
-                    fields=DAILY_BASIC_FIELDS,
-                )
+                try:
+                    frame = request_endpoint(
+                        pro,
+                        "daily_basic",
+                        {"trade_date": trade_date_text, "fields": DAILY_BASIC_FIELDS},
+                        policy=policy,
+                    )
+                except TushareEndpointError as error:
+                    if failures is not None:
+                        failures.append(error.as_record(trade_date=trade_date_text))
+                    continue
                 if not frame.empty:
                     frames.append(frame)
                 time.sleep(sleep_seconds)
                 continue
 
             for symbol in symbols:
-                frame = pro.daily_basic(
-                    ts_code=symbol,
-                    trade_date=trade_date_text,
-                    fields=DAILY_BASIC_FIELDS,
-                )
+                try:
+                    frame = request_endpoint(
+                        pro,
+                        "daily_basic",
+                        {"ts_code": symbol, "trade_date": trade_date_text, "fields": DAILY_BASIC_FIELDS},
+                        policy=policy,
+                    )
+                except TushareEndpointError as error:
+                    if failures is not None:
+                        failures.append(error.as_record(symbol=symbol, trade_date=trade_date_text))
+                    continue
                 if not frame.empty:
                     frames.append(frame)
                 time.sleep(sleep_seconds)
@@ -264,11 +418,13 @@ def fetch_fina_indicator(
 
 
 def sync_daily(config: SyncConfig, symbols: Sequence[str] | None = None) -> tuple[Path, int]:
-    token = get_tushare_token(env_path=config.env_path)
-    ts = _load_tushare()
-    pro = ts.pro_api(token)
-    selected = list(symbols) if symbols else list_active_symbols(pro)
-    prices, volumes = fetch_daily_with_adjustment(
+    pro = create_tushare_client(env_path=config.env_path)
+    policy = TushareRequestPolicy(
+        min_interval_seconds=config.min_request_interval,
+        max_attempts=config.max_attempts,
+    )
+    selected = list(symbols) if symbols else list_active_symbols(pro, request_policy=policy)
+    daily = fetch_daily_ohlcv_with_adjustment(
         pro,
         selected,
         config.start_date,
@@ -276,34 +432,53 @@ def sync_daily(config: SyncConfig, symbols: Sequence[str] | None = None) -> tupl
         batch_size=config.batch_size,
         days_per_chunk=config.days_per_chunk,
         sleep_seconds=config.sleep_seconds,
+        request_policy=policy,
     )
-    rows = write_daily_market_data(prices, volumes, db_path=config.db_path, source="tushare")
+    rows = write_daily_market_data(
+        daily.close,
+        daily.volume,
+        high_prices=daily.high,
+        low_prices=daily.low,
+        db_path=config.db_path,
+        source="tushare",
+    )
     return config.db_path, rows
 
 
 def sync_factor_data(config: SyncConfig, symbols: Sequence[str] | None = None) -> tuple[Path, dict[str, int]]:
-    token = get_tushare_token(env_path=config.env_path)
-    ts = _load_tushare()
-    pro = ts.pro_api(token)
+    pro = create_tushare_client(env_path=config.env_path)
     selected = list(symbols) if symbols else None
     row_counts: dict[str, int] = {}
+    policy = TushareRequestPolicy(
+        min_interval_seconds=config.min_request_interval,
+        max_attempts=config.max_attempts,
+    )
 
     if config.stock_basic:
-        stock_basic = fetch_stock_basic(pro)
+        stock_basic = fetch_stock_basic(pro, request_policy=policy)
         row_counts["stock_basic"] = write_stock_basic(stock_basic, db_path=config.db_path, source="tushare")
     if config.daily_basic:
-        daily_basic = fetch_daily_basic(
-            pro,
-            selected,
-            config.start_date,
-            config.end_date,
-            batch_size=config.batch_size,
-            days_per_chunk=config.days_per_chunk,
-            sleep_seconds=config.sleep_seconds,
-        )
-        row_counts["daily_basic"] = write_daily_basic(daily_basic, db_path=config.db_path, source="tushare")
+        daily_basic_rows = 0
+        daily_basic_failures: list[dict[str, object]] = []
+        for date_start, date_end in chunk_date_range(config.start_date, config.end_date, config.days_per_chunk):
+            daily_basic = fetch_daily_basic(
+                pro,
+                selected,
+                date_start,
+                date_end,
+                batch_size=config.batch_size,
+                days_per_chunk=config.days_per_chunk,
+                sleep_seconds=config.sleep_seconds,
+                request_policy=policy,
+                failures=daily_basic_failures,
+            )
+            daily_basic_rows += write_daily_basic(daily_basic, db_path=config.db_path, source="tushare")
+        row_counts["daily_basic"] = daily_basic_rows
+        if daily_basic_failures:
+            write_tushare_capabilities(daily_basic_failures, db_path=config.db_path)
+            row_counts["daily_basic_failed"] = len(daily_basic_failures)
     if config.fina_indicator:
-        fina_symbols = selected if selected is not None else list_active_symbols(pro)
+        fina_symbols = selected if selected is not None else list_active_symbols(pro, request_policy=policy)
         fina_failures: list[dict[str, object]] = []
         fina_indicator = fetch_fina_indicator(
             pro,
@@ -312,10 +487,7 @@ def sync_factor_data(config: SyncConfig, symbols: Sequence[str] | None = None) -
             config.end_date,
             batch_size=config.batch_size,
             sleep_seconds=config.sleep_seconds,
-            request_policy=TushareRequestPolicy(
-                min_interval_seconds=config.min_request_interval,
-                max_attempts=config.max_attempts,
-            ),
+            request_policy=policy,
             failures=fina_failures,
         )
         row_counts["fina_indicator"] = write_fina_indicator(fina_indicator, db_path=config.db_path, source="tushare")

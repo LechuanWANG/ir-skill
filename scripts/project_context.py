@@ -25,6 +25,7 @@ class ProjectPaths:
     staging_root: Path
     database_path: Path
     settings_root: Path
+    tracking_root: Path
     trash_root: Path
     wiki_root: Path
     wiki_raw_root: Path
@@ -66,6 +67,7 @@ def project_paths(
         staging_root=library_root / "staging",
         database_path=library_root / "database" / "investment_research.sqlite",
         settings_root=library_root / "settings",
+        tracking_root=library_root / "tracking",
         trash_root=library_root / "trash",
         wiki_root=wiki_root,
         wiki_raw_root=wiki_root / "raw",
@@ -81,6 +83,7 @@ def ensure_project_layout(paths: ProjectPaths) -> None:
         paths.staging_root,
         paths.database_path.parent,
         paths.settings_root,
+        paths.tracking_root,
         paths.trash_root,
         paths.wiki_raw_root,
     ):

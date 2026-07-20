@@ -1,0 +1,4 @@
+interface:
+  display_name: "IR Deep Review"
+  short_description: "Independent investment research cross-examination"
+  default_prompt: "Use $ir-deep-review for independent investment research cross-examination."

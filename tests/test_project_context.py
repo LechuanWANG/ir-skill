@@ -46,6 +46,7 @@ class ProjectContextTests(unittest.TestCase):
             self.assertTrue(paths.staging_root.is_dir())
             self.assertTrue(paths.database_path.parent.is_dir())
             self.assertTrue(paths.report_root.is_dir())
+            self.assertTrue(paths.tracking_root.is_dir())
             self.assertTrue(paths.wiki_raw_root.is_dir())
             self.assertFalse((root / ".ir-skill").exists())
 

@@ -1,12 +1,29 @@
+---
+name: ir-deep-review
+description: Independent investment research cross-examination for explicitly requested deep research, review, or challenge of evidence, assumptions, valuation, competition, governance, and tail risks.
+---
+
 # 深度研究与独立质询
 
-只在用户明确要求深度研究、独立审阅或交叉质询时使用。先按主 Skill 选择 `long-term-trading.md`、`medium-term-catalyst.md` 或 `short-term-trading.md`，再用本文件增加质询；普通单股、候选比较、研究计划和行动判断不得自动升级为多代理流程。
+只在用户明确要求深度研究、独立审阅或交叉质询时使用。先读取共享的研究纪律与项目边界：[`../shared/research-discipline.md`](../shared/research-discipline.md)。
 
-## 启动条件
+## 共享支持材料
+
+- 获取公司、交易所、监管、政府或行业机构的网页、PDF、原始披露或政策资料时，读取 [`../shared/external-evidence-sources.md`](../shared/external-evidence-sources.md)。
+- 使用 TuShare、项目 SQLite 或结构化财务、宏观、行情和跨资产数据时，读取 [`../../references/tushare-data.md`](../../references/tushare-data.md)。
+- 用户要求保存、复用、历史复盘或 Wiki，或任务确有多阶段、交接、长命令和上下文压缩风险时，读取 [`../../references/persistence.md`](../../references/persistence.md)。
+
+先按持有期调用 [`../ir-long-term-trading/SKILL.md`](../ir-long-term-trading/SKILL.md)、[`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md) 或 [`../ir-short-term-trading/SKILL.md`](../ir-short-term-trading/SKILL.md)。
+
+## 研究方法
+
+只在用户明确要求深度研究、独立审阅或交叉质询时使用。先按持有期选择长期、中期或短期子 Skill，再用本文件增加质询；普通单股、候选比较、研究计划和行动判断不得自动升级为多代理流程。
+
+### 启动条件
 
 主 Agent 先准备一份对决策充分的共同证据包：研究对象、决策、持有期、`as_of`、候选和约束、核心假设、原始证据、关键缺口，以及可能改变排序或行动标签的变量。证据包应覆盖已知的关键争议与反方路径，不因准备时间而省略重要材料。所有审阅者使用相同时间边界，不得引入决策时点之后的信息证明此前判断。
 
-## 可执行的独立审阅
+### 可执行的独立审阅
 
 在工具和并发允许时，最多启动三个相互独立的审阅者，主 Agent 保留裁决职责：
 
@@ -26,13 +43,13 @@
 
 候选比较时同时给出自己的排序或行动倾向。不要要求固定篇幅或逐项复述共同证据，但不得因篇幅控制遗漏能够改变结论的证据、反证或不确定性。
 
-## 交叉质询
+### 交叉质询
 
 主 Agent 只转交可能改变核心假设、估值、排序、主要风险或行动标签的冲突。质询应指出具体主张、未证实假设、证据或时间口径问题，以及质询成立时会如何改变决策。
 
 原审阅者通过补充证据、量化影响、收窄范围、降低置信度、修改排序或撤回主张回应。将结果标为 `支持`、`收窄`、`未解决` 或 `撤回`。在决策相关分歧已充分检验、没有未处理的高影响证据缺口，且新一轮也不再可能改变决策时停止；不为展示讨论而延长流程，也不得只因需要尽快结束而保留未检验的关键分歧。
 
-## 主 Agent 裁决
+### 主 Agent 裁决
 
 不要按票数或平均分决定。综合证据强度、因果关系、影响量级、赔率和错误损失，明确：
 

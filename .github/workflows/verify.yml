@@ -1,0 +1,31 @@
+name: Verify IR Skill
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Validate Skill structure
+        run: python scripts/validate_skills.py
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build Research Hub
+        working-directory: web
+        run: npm run build

@@ -30,7 +30,23 @@ def classify_tushare_exception(error: Exception) -> tuple[str, bool]:
         return "invalid_token", False
     if any(token in message for token in ("429", "rate limit", "too many", "频率", "访问过于频繁", "每分钟")):
         return "rate_limited", True
-    if any(token in message for token in ("timeout", "timed out", "connection", "network", "temporar", "502", "503", "504")):
+    if any(
+        token in message
+        for token in (
+            "timeout",
+            "timed out",
+            "connection",
+            "network",
+            "temporar",
+            "urlopen error",
+            "nodename nor servname",
+            "name or service not known",
+            "dns",
+            "502",
+            "503",
+            "504",
+        )
+    ):
         return "transient_network", True
     return "endpoint_error", False
 

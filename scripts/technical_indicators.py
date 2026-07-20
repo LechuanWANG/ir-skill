@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite, sqrt
+from math import exp, isfinite, log, sqrt
 from typing import Any
 
 import pandas as pd
 
 
 TRADING_DAYS_PER_YEAR = 252
+HISTORICAL_PRICE_WINDOWS = {
+    "trailing_1y": TRADING_DAYS_PER_YEAR,
+    "trailing_3y": TRADING_DAYS_PER_YEAR * 3,
+}
+MIN_OBSERVATIONS_FOR_PATH_LABEL = TRADING_DAYS_PER_YEAR // 2
 
 
 @dataclass(frozen=True)
@@ -63,9 +68,11 @@ def calculate_technical_indicators(
     close_prices: pd.Series,
     volumes: pd.Series | None = None,
     *,
+    high_prices: pd.Series | None = None,
+    low_prices: pd.Series | None = None,
     settings: TechnicalIndicatorSettings = TechnicalIndicatorSettings(),
 ) -> pd.DataFrame:
-    """Calculate price and volume indicators for one forward-adjusted price series."""
+    """Calculate indicators and preserve available forward-adjusted price extremes."""
     settings.validate()
     prices = _numeric_series(close_prices)
     if prices.empty:
@@ -126,6 +133,10 @@ def calculate_technical_indicators(
     result = pd.DataFrame(index=prices.index)
     result.index.name = prices.index.name or "trade_date"
     result["close_qfq"] = prices
+    if high_prices is not None:
+        result["high_qfq"] = _numeric_series(high_prices).reindex(prices.index)
+    if low_prices is not None:
+        result["low_qfq"] = _numeric_series(low_prices).reindex(prices.index)
     result[f"sma_{settings.sma_short}"] = rolling_short
     result[f"sma_{settings.sma_long}"] = rolling_long
     result[f"price_vs_sma_{settings.sma_short}"] = (prices / rolling_short) - 1
@@ -212,6 +223,171 @@ def _last_macd_cross(histogram: pd.Series, lookback_sessions: int) -> dict[str, 
             "sessions_ago": len(values) - 1 - position,
         }
     return None
+
+
+def _price_path_label(
+    annualized_log_trend: float | None,
+    trend_r_squared: float | None,
+    observations: int,
+) -> str:
+    """Classify a price path descriptively; it is not a trading signal."""
+    if observations < MIN_OBSERVATIONS_FOR_PATH_LABEL:
+        return "insufficient_history_for_path_label"
+    if annualized_log_trend is None or trend_r_squared is None:
+        return "insufficient_price_data_for_path_label"
+    if annualized_log_trend >= 0.10 and trend_r_squared >= 0.45:
+        return "persistent_uptrend"
+    if annualized_log_trend <= -0.10 and trend_r_squared >= 0.45:
+        return "persistent_downtrend"
+    if abs(annualized_log_trend) < 0.10 and trend_r_squared < 0.25:
+        return "sideways_or_oscillating"
+    return "mixed_or_transitional"
+
+
+def _linear_log_price_trend(prices: pd.Series) -> tuple[float | None, float | None]:
+    """Return annualized log-price slope and fit quality without adding a numpy dependency."""
+    values = [float(value) for value in prices.tolist() if value > 0 and isfinite(float(value))]
+    count = len(values)
+    if count < 2:
+        return None, None
+
+    x_mean = (count - 1) / 2
+    log_values = [log(value) for value in values]
+    y_mean = sum(log_values) / count
+    denominator = sum((position - x_mean) ** 2 for position in range(count))
+    if denominator == 0:
+        return None, None
+    slope = sum(
+        (position - x_mean) * (value - y_mean)
+        for position, value in enumerate(log_values)
+    ) / denominator
+    intercept = y_mean - (slope * x_mean)
+    total_sum_squares = sum((value - y_mean) ** 2 for value in log_values)
+    residual_sum_squares = sum(
+        (value - (intercept + (slope * position))) ** 2
+        for position, value in enumerate(log_values)
+    )
+    trend_r_squared = 1.0 if total_sum_squares == 0 else max(0.0, 1 - (residual_sum_squares / total_sum_squares))
+    return exp(slope * TRADING_DAYS_PER_YEAR) - 1, trend_r_squared
+
+
+def _summarize_price_path(
+    close_prices: pd.Series,
+    high_prices: pd.Series | None,
+    low_prices: pd.Series | None,
+    *,
+    requested_sessions: int | None,
+) -> dict[str, Any]:
+    """Describe the available price path for one explicit lookback window."""
+    prices = _numeric_series(close_prices).dropna()
+    if requested_sessions is not None:
+        if len(prices) < requested_sessions:
+            return {
+                "available": False,
+                "required_sessions": requested_sessions,
+                "available_sessions": len(prices),
+            }
+        prices = prices.tail(requested_sessions)
+
+    high_basis = "forward_adjusted_intraday_high"
+    highs = _numeric_series(high_prices).reindex(prices.index) if high_prices is not None else pd.Series(index=prices.index, dtype=float)
+    highs = highs.where(highs >= prices, prices).fillna(prices)
+    if high_prices is None or highs.eq(prices).all():
+        high_basis = "forward_adjusted_close_fallback"
+
+    low_basis = "forward_adjusted_intraday_low"
+    lows = _numeric_series(low_prices).reindex(prices.index) if low_prices is not None else pd.Series(index=prices.index, dtype=float)
+    lows = lows.where(lows <= prices, prices).fillna(prices)
+    if low_prices is None or lows.eq(prices).all():
+        low_basis = "forward_adjusted_close_fallback"
+
+    historical_high = _finite_number(highs.max())
+    historical_low = _finite_number(lows.min())
+    peak_date = highs.idxmax() if historical_high is not None else None
+    running_high = highs.cummax()
+    drawdown = (prices / running_high) - 1
+    first_price = _finite_number(prices.iloc[0])
+    latest_price = _finite_number(prices.iloc[-1])
+    observations = len(prices)
+    years = (observations - 1) / TRADING_DAYS_PER_YEAR
+    cagr = None
+    if first_price is not None and latest_price is not None and first_price > 0 and years > 0:
+        cagr = (latest_price / first_price) ** (1 / years) - 1
+    annualized_log_trend, trend_r_squared = _linear_log_price_trend(prices)
+    range_position = None
+    if historical_high is not None and historical_low is not None and historical_high > historical_low and latest_price is not None:
+        range_position = (latest_price - historical_low) / (historical_high - historical_low)
+
+    return {
+        "available": True,
+        "observations": observations,
+        "start_trade_date": pd.Timestamp(prices.index[0]).strftime("%Y-%m-%d"),
+        "end_trade_date": pd.Timestamp(prices.index[-1]).strftime("%Y-%m-%d"),
+        "start_close_qfq": first_price,
+        "latest_close_qfq": latest_price,
+        "total_return": ((latest_price / first_price) - 1) if first_price not in {None, 0} and latest_price is not None else None,
+        "cagr": cagr,
+        "annualized_log_trend": annualized_log_trend,
+        "trend_r_squared": trend_r_squared,
+        "price_path_label": _price_path_label(annualized_log_trend, trend_r_squared, observations),
+        "historical_high_qfq": historical_high,
+        "historical_high_trade_date": (
+            pd.Timestamp(peak_date).strftime("%Y-%m-%d") if peak_date is not None else None
+        ),
+        "historical_high_basis": high_basis,
+        "distance_to_historical_high": (
+            (latest_price / historical_high) - 1
+            if latest_price is not None and historical_high not in {None, 0}
+            else None
+        ),
+        "historical_low_qfq": historical_low,
+        "historical_low_basis": low_basis,
+        "position_in_historical_range": range_position,
+        "current_drawdown_from_running_high": _finite_number(drawdown.iloc[-1]),
+        "maximum_drawdown": _finite_number(drawdown.min()),
+    }
+
+
+def summarize_historical_price_structure(indicators: pd.DataFrame) -> dict[str, Any]:
+    """Expose long-run price context that a short-horizon indicator snapshot otherwise omits."""
+    close_prices = indicators["close_qfq"] if "close_qfq" in indicators else pd.Series(dtype=float)
+    high_prices = indicators["high_qfq"] if "high_qfq" in indicators else None
+    low_prices = indicators["low_qfq"] if "low_qfq" in indicators else None
+    available_prices = _numeric_series(close_prices).dropna()
+    if available_prices.empty:
+        return {
+            "available_history": {"observations": 0},
+            "periods": {},
+        }
+
+    periods = {
+        "full_available_history": _summarize_price_path(
+            available_prices,
+            high_prices,
+            low_prices,
+            requested_sessions=None,
+        )
+    }
+    for name, sessions in HISTORICAL_PRICE_WINDOWS.items():
+        periods[name] = _summarize_price_path(
+            available_prices,
+            high_prices,
+            low_prices,
+            requested_sessions=sessions,
+        )
+    return {
+        "available_history": {
+            "observations": len(available_prices),
+            "start_trade_date": pd.Timestamp(available_prices.index[0]).strftime("%Y-%m-%d"),
+            "end_trade_date": pd.Timestamp(available_prices.index[-1]).strftime("%Y-%m-%d"),
+        },
+        "periods": periods,
+        "usage_boundary": (
+            "These are descriptive summaries of the stored forward-adjusted price path. "
+            "Full available history begins at the earliest local SQLite observation, not necessarily the listing date; "
+            "the path label is not a trading signal."
+        ),
+    }
 
 
 def summarize_technical_indicators(
@@ -343,8 +519,9 @@ def summarize_technical_indicators(
         "dimensions": dimensions,
         "available_dimensions": available_dimensions,
         "missing_dimensions": [name for name in dimensions if name not in available_dimensions],
+        "historical_price_structure": summarize_historical_price_structure(indicators),
         "usage_boundary": (
-            "These labels describe price, momentum, risk, and participation states. "
+            "These labels describe price, momentum, risk, participation, and historical price-path states. "
             "They are not a composite score or an automatic buy/sell signal."
         ),
     }
