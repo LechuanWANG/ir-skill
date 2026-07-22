@@ -49,7 +49,7 @@ FINA_INDICATOR_FIELDS = (
     "ts_code,end_date,ann_date,roe,roe_dt,roa,netprofit_margin,grossprofit_margin,"
     "netprofit_yoy,or_yoy,debt_to_assets,current_ratio,quick_ratio,ocf_to_or,bps,eps"
 )
-STOCK_BASIC_FIELDS = "ts_code,name,industry,market,list_date"
+STOCK_BASIC_FIELDS = "ts_code,name,industry,market,list_date,list_status,delist_date"
 
 
 @dataclass(frozen=True)
@@ -72,10 +72,17 @@ class SyncConfig:
 class ForwardAdjustedDailyFrames:
     """Forward-adjusted daily price matrices returned by one TuShare sync window."""
 
+    open: pd.DataFrame
     close: pd.DataFrame
     high: pd.DataFrame
     low: pd.DataFrame
     volume: pd.DataFrame
+    amount: pd.DataFrame
+    raw_open: pd.DataFrame
+    raw_close: pd.DataFrame
+    raw_high: pd.DataFrame
+    raw_low: pd.DataFrame
+    adjustment_factor: pd.DataFrame
 
 
 class TushareHttpClient:
@@ -211,6 +218,38 @@ def list_active_symbols(pro, *, request_policy: TushareRequestPolicy | None = No
     return frame["ts_code"].dropna().astype(str).tolist()
 
 
+def list_symbols_for_period(
+    pro,
+    start_date: str,
+    end_date: str,
+    *,
+    request_policy: TushareRequestPolicy | None = None,
+) -> list[str]:
+    """Return symbols listed at any point in the requested research interval."""
+    frames: list[pd.DataFrame] = []
+    for status in ("L", "D", "P"):
+        frame = request_endpoint(
+            pro,
+            "stock_basic",
+            {
+                "list_status": status,
+                "fields": "ts_code,list_date,delist_date,list_status",
+            },
+            policy=request_policy,
+        )
+        if not frame.empty:
+            frames.append(frame)
+    if not frames:
+        return []
+    metadata = pd.concat(frames, ignore_index=True).drop_duplicates("ts_code")
+    listed = pd.to_datetime(metadata.get("list_date"), errors="coerce")
+    delisted = pd.to_datetime(metadata.get("delist_date"), errors="coerce")
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    keep = listed.le(end) & (delisted.isna() | delisted.ge(start))
+    return metadata.loc[keep, "ts_code"].dropna().astype(str).drop_duplicates().tolist()
+
+
 def fetch_daily_ohlcv_with_adjustment(
     pro,
     symbols: Sequence[str],
@@ -221,8 +260,8 @@ def fetch_daily_ohlcv_with_adjustment(
     days_per_chunk: int = DEFAULT_DAYS_PER_CHUNK,
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
     request_policy: TushareRequestPolicy | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fetch daily OHLCV and convert close, high, and low to a forward-adjusted basis."""
+) -> ForwardAdjustedDailyFrames:
+    """Fetch daily OHLCV/amount and adjust each price field without filling suspensions."""
     price_frames: list[pd.DataFrame] = []
     adjust_frames: list[pd.DataFrame] = []
     policy = request_policy or TushareRequestPolicy()
@@ -237,7 +276,7 @@ def fetch_daily_ohlcv_with_adjustment(
                     "ts_code": codes,
                     "start_date": date_start,
                     "end_date": date_end,
-                    "fields": "ts_code,trade_date,close,high,low,vol",
+                    "fields": "ts_code,trade_date,open,close,high,low,vol,amount",
                 },
                 policy=policy,
             )
@@ -255,10 +294,17 @@ def fetch_daily_ohlcv_with_adjustment(
 
     if not price_frames or not adjust_frames:
         return ForwardAdjustedDailyFrames(
+            open=pd.DataFrame(),
             close=pd.DataFrame(),
             high=pd.DataFrame(),
             low=pd.DataFrame(),
             volume=pd.DataFrame(),
+            amount=pd.DataFrame(),
+            raw_open=pd.DataFrame(),
+            raw_close=pd.DataFrame(),
+            raw_high=pd.DataFrame(),
+            raw_low=pd.DataFrame(),
+            adjustment_factor=pd.DataFrame(),
         )
 
     raw = pd.concat(price_frames, ignore_index=True).drop_duplicates()
@@ -266,21 +312,31 @@ def fetch_daily_ohlcv_with_adjustment(
     raw["trade_date"] = pd.to_datetime(raw["trade_date"])
     adj["trade_date"] = pd.to_datetime(adj["trade_date"])
 
+    open_prices = raw.pivot(index="trade_date", columns="ts_code", values="open").sort_index()
     close = raw.pivot(index="trade_date", columns="ts_code", values="close").sort_index()
     high = raw.pivot(index="trade_date", columns="ts_code", values="high").sort_index()
     low = raw.pivot(index="trade_date", columns="ts_code", values="low").sort_index()
     volume = raw.pivot(index="trade_date", columns="ts_code", values="vol").sort_index()
+    amount = raw.pivot(index="trade_date", columns="ts_code", values="amount").sort_index()
     adj_factor = adj.pivot(index="trade_date", columns="ts_code", values="adj_factor").sort_index()
 
     last_adjustment = adj_factor.ffill().iloc[-1]
-    adjusted_close = (close * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
-    adjusted_high = (high * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
-    adjusted_low = (low * adj_factor).div(last_adjustment, axis=1).sort_index().ffill()
+    adjusted_open = (open_prices * adj_factor).div(last_adjustment, axis=1).sort_index()
+    adjusted_close = (close * adj_factor).div(last_adjustment, axis=1).sort_index()
+    adjusted_high = (high * adj_factor).div(last_adjustment, axis=1).sort_index()
+    adjusted_low = (low * adj_factor).div(last_adjustment, axis=1).sort_index()
     return ForwardAdjustedDailyFrames(
+        open=adjusted_open,
         close=adjusted_close,
         high=adjusted_high,
         low=adjusted_low,
         volume=volume,
+        amount=amount,
+        raw_open=open_prices,
+        raw_close=close,
+        raw_high=high,
+        raw_low=low,
+        adjustment_factor=adj_factor,
     )
 
 
@@ -310,13 +366,18 @@ def fetch_daily_with_adjustment(
 
 
 def fetch_stock_basic(pro, *, request_policy: TushareRequestPolicy | None = None) -> pd.DataFrame:
-    """Fetch listed A-share stock metadata."""
-    return request_endpoint(
-        pro,
-        "stock_basic",
-        {"list_status": "L", "fields": STOCK_BASIC_FIELDS},
-        policy=request_policy,
-    )
+    """Fetch listed, delisted, and paused A-share metadata for lifecycle-aware replay."""
+    frames: list[pd.DataFrame] = []
+    for status in ("L", "D", "P"):
+        frame = request_endpoint(
+            pro,
+            "stock_basic",
+            {"list_status": status, "fields": STOCK_BASIC_FIELDS},
+            policy=request_policy,
+        )
+        if not frame.empty:
+            frames.append(frame)
+    return pd.concat(frames, ignore_index=True).drop_duplicates("ts_code") if frames else pd.DataFrame()
 
 
 def fetch_daily_basic(
@@ -423,7 +484,12 @@ def sync_daily(config: SyncConfig, symbols: Sequence[str] | None = None) -> tupl
         min_interval_seconds=config.min_request_interval,
         max_attempts=config.max_attempts,
     )
-    selected = list(symbols) if symbols else list_active_symbols(pro, request_policy=policy)
+    selected = list(symbols) if symbols else list_symbols_for_period(
+        pro,
+        config.start_date,
+        config.end_date,
+        request_policy=policy,
+    )
     daily = fetch_daily_ohlcv_with_adjustment(
         pro,
         selected,
@@ -437,8 +503,15 @@ def sync_daily(config: SyncConfig, symbols: Sequence[str] | None = None) -> tupl
     rows = write_daily_market_data(
         daily.close,
         daily.volume,
+        open_prices=daily.open,
         high_prices=daily.high,
         low_prices=daily.low,
+        amounts=daily.amount,
+        raw_open_prices=daily.raw_open,
+        raw_close_prices=daily.raw_close,
+        raw_high_prices=daily.raw_high,
+        raw_low_prices=daily.raw_low,
+        adjustment_factors=daily.adjustment_factor,
         db_path=config.db_path,
         source="tushare",
     )
@@ -478,7 +551,12 @@ def sync_factor_data(config: SyncConfig, symbols: Sequence[str] | None = None) -
             write_tushare_capabilities(daily_basic_failures, db_path=config.db_path)
             row_counts["daily_basic_failed"] = len(daily_basic_failures)
     if config.fina_indicator:
-        fina_symbols = selected if selected is not None else list_active_symbols(pro, request_policy=policy)
+        fina_symbols = selected if selected is not None else list_symbols_for_period(
+            pro,
+            config.start_date,
+            config.end_date,
+            request_policy=policy,
+        )
         fina_failures: list[dict[str, object]] = []
         fina_indicator = fetch_fina_indicator(
             pro,

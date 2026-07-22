@@ -19,11 +19,12 @@
 - `scripts/tushare_research_data.py plan <family> --as-of <YYYYMMDD>`：在不读取 Token、不访问网络的情况下生成与问题范围相称的请求计划。代码相关数据传入 `--symbol`，报告期数据传入 `--period`；可用 `--datasets` 精确选择目录项。期权 `opt_daily` 默认按 `--as-of` 请求交易所全市场快照；中债曲线使用 `--curve-type 0|1` 选择到期或即期曲线。计划可收敛无关请求，但不得遗漏判断所需的数据族、时间段或核验字段。
 - `scripts/tushare_research_data.py fetch <family> --as-of <YYYYMMDD>`：默认把响应、权限状态和修订感知观测写入 SQLite。具有公告/实际披露日期的记录会先过滤掉晚于 `as_of` 的信息；没有发布日期字段的 endpoint 会明确标为 `historically_unverified`，不能假装成严格的历史时点数据。仅诊断时使用 `--no-cache`，需要任一 endpoint 不可用即失败时加 `--strict`。
 - `scripts/tushare_mode_data.py plan/fetch <long|medium|short>`：规划和获取 A 股持有期数据包。显式设置 `--end-date`、`--benchmark`，用 `--datasets` 选择当前问题所需数据。`fetch` 默认先检查项目 SQLite；对 `daily`、`adj_factor`、`daily_basic`、`moneyflow`、`index_daily`、`stk_limit` 和交易日历，只有本地日期覆盖存在缺口才联网，并将请求收窄到缺失日期区间。完整覆盖时结果状态为 `cached` 且 `network_requests=0`，`--output-dir` 从原始响应缓存重建按日期排序的 CSV；如果 SQLite 仅有规范化计算字段而缺少 CSV 所需的原始接口字段，才会为这些原始字段按日期定向回补。需要重新核验修订或强制刷新时使用 `--refresh`。
-- `scripts/tushare_mode_data.py indicators`：从已入库的前复权日线、日内高低价和成交量计算基础指标，不发起网络请求；短期研究优先读取输出中的 `technical_snapshot`，其中按趋势、动量、风险/位置和成交参与组织当前状态与近期变化，并用 `historical_price_structure` 提供本地覆盖区间、全可用历史/1 年/3 年的历史高低点、距高点、最大回撤、年化趋势和路径标签。`a_share_daily` 旧库会自动增加 `high_qfq`、`low_qfq`；尚未重新同步的旧行会明确退回前复权收盘价的极值，不能表述为日内历史高低点。
-- `scripts/tushare_sector_data.py catalog/plan/fetch/performance/memberships`：板块专用数据链路。同花顺是默认市场板块口径；`fetch` 将 `ths_index`、`ths_daily`、`moneyflow_ind_ths` 和 `ths_member` 分别写入板块字典、板块日线、板块资金流和成分快照，同时保留通用观察缓存。`performance` 和 `memberships` 只读 SQLite，不访问网络；东财与通达信可作为独立 provider 交叉检查，但代码和涨跌幅不得与同花顺直接混表。
+- `scripts/tushare_mode_data.py indicators`：从 SQLite 计算技术快照、历史结构和相对收益；原始 OHLC 与复权因子齐全时按查询截止日重算前复权，旧库缺口会标记。
+- `scripts/short_term_screen.py quality/screen/evidence/confirm/backtest/risk/recommendations/review`：先审计数据门槛，再构建股票池、结构化证据、Agent 判断验证、样本外回放和风险预算仓位。推荐索引与可选完整决策分开保存；只有显式 `review` 才读取推荐并计算后验研究结果。
+- `scripts/tushare_sector_data.py catalog/plan/fetch/performance/rotation/memberships`：板块专用数据链路。同花顺是默认市场板块口径；`fetch` 将 `ths_index`、`ths_daily`、`moneyflow_ind_ths` 和 `ths_member` 分别写入板块字典、板块日线、板块资金流和成分快照，同时保留通用观察缓存。`performance`、`rotation` 和 `memberships` 只读 SQLite，不访问网络；`rotation` 比较最近两个有效交易日的板块涨跌、5 日收益变化、5 日相对强弱排名变化和市场宽度变化，不产生交易信号。东财与通达信可作为独立 provider 交叉检查，但代码和涨跌幅不得与同花顺直接混表。
 - `scripts/tushare_gateway.py fetch/probe/cache`：处理模式包未覆盖的显式 endpoint、权限小样本检查和原始缓存查询；输出权限、Token、参数、限流和网络失败分类。只对限流和临时网络错误重试。
 - `scripts/tushare_sync.py --check-config`：在首次请求、变更项目根目录 `.env` 或切换终端入口后，输出不含 Token 明文的生效来源、配置文件绝对路径和指纹。进程环境中的 `TUSHARE_TOKEN` 优先于项目根目录 `.env`；需要指定其他文件时使用 `--env-file`。
-- `scripts/tushare_sync.py`：补齐需要重复比较的全市场基础数据；`fina_indicator` 同步按证券保留成功项，并把单证券失败写为可复核的接口能力记录。
+- `scripts/tushare_sync.py`：补齐需要重复比较的全市场基础数据；历史区间同步会纳入区间内曾上市、后来退市的证券，并保存 `list_status`/`delist_date`；`fina_indicator` 同步按证券保留成功项。
 - `scripts/market_data_store.py`：读写和查询本地 SQLite。任意 endpoint 都会保留在 `tushare_research_observation`；板块字典、日线、行业资金流和成分分别规范化到 `market_sector_master`、`market_sector_daily`、`market_sector_flow_daily`、`sector_membership_daily`，其他资金流、涨停事件、筹码、因子、机构调研和公司行为继续进入对应规范化表。原始 payload、获取时间、可得时间和修订版本仍以通用观察缓存为准。
 
 模式数据和通用研究数据都会按 `as_of` 过滤具有公告/交易/调研可得日期的记录；某行日期为空或不可解析时不能视为历史可用，必须剔除并报告数据质量缺口。没有可得日期的接口会标为 `historically_unverified`。板块成分接口若不提供生效交易日，只会以实际抓取日作为快照键，不能倒填为研究 `as_of`。15000 积分套餐不能自动推断包含集合竞价成交或 A 股日线 RT 的独立权限，`stk_mins`、RT 和集合竞价接口必须先单独 probe，失败或空返回要逐 endpoint 报告。
@@ -37,7 +38,11 @@ TuShare 是价格、估值、成交、资金、市场状态、披露时间线、
 先读本地结果；无数据、过期或覆盖不足时再执行 `plan` 和 `fetch`：
 
 ```bash
+python3 scripts/short_term_screen.py screen --as-of 20260719 --profile trade --benchmark 000300.SH
+python3 scripts/short_term_screen.py backtest --start-date 20240101 --end-date 20260719 --profile trade
 python3 scripts/tushare_sector_data.py performance --provider ths --sector-type I --as-of 20260719 --sort-by return_5d
+python3 scripts/tushare_sector_data.py rotation --provider ths --sector-type I --as-of 20260719
+python3 scripts/tushare_sector_data.py rotation --provider ths --sector-type N --as-of 20260719
 python3 scripts/tushare_sector_data.py memberships --provider ths --stock-code 000001.SZ --as-of 20260719
 python3 scripts/tushare_sector_data.py plan --provider ths --as-of 20260719
 python3 scripts/tushare_sector_data.py fetch --provider ths --start-date 20260601 --as-of 20260719 --datasets master daily flow
@@ -47,6 +52,7 @@ python3 scripts/tushare_sector_data.py fetch --provider ths --sector-code 885001
 
 - 全市场板块横截面不传 `--sector-code`；单日按 `trade_date=as_of` 请求，历史范围为避免接口行数上限静默截断而按工作日拆成逐日横截面请求，交易所休市日可能返回空快照。单板块历史显式传 provider 自己的板块代码和日期范围。
 - `performance` 只用同一最新有效交易日形成涨跌与宽度；板块缺少 5/20 个交易日历史或资金流时单独报告覆盖，不填充、不把短历史伪装成长窗口。
+- `rotation` 使用本地最近两个有效交易日：`top_changes` 与 `bottom_changes` 分别给出指定字段变化最大的板块和最小的板块。默认字段 `rank_change_5d` 为上一有效交易日的 5 日收益排名减去当前排名，正值仅表示相对排名改善；同时检查 `pct_chg_change`、`return_5d_change` 和 `breadth_change`，不能将任一字段单独当成交易信号。
 - 同花顺 `type=I` 是行业、`N` 是概念；`performance` 默认只查 `I`，避免把地域、宽基、风格和“昨日表现”等特色指数混入行业排行。概念、地域或风格研究显式传对应 provider 类型，并单独解释其定义。
 - 同花顺 `type=I` 内仍有多个行业层级。`performance --universe auto` 对 `I` 默认只比较当日 `moneyflow_ind_ths` 覆盖的统一行业集合，避免把三级、四级行业和上级行业混排；需要审阅完整层级时显式传 `--universe all`，并解释层级重叠。
 - `memberships` 使用实际抓取日标记没有生效日期的成分快照，不能倒填为研究 `as_of`。个股不在已缓存快照中不等于它不属于任何板块，应先检查板块字典和成分快照覆盖。
@@ -109,7 +115,7 @@ python3 scripts/tushare_research_data.py fetch bond --as-of 20260718 --datasets 
 - 用于计算、筛选、排名、回测、历史比较或后续复用的结构化数据，先写入 SQLite；一次性事实核验和少量即时行情可以不入库。
 - `fetch` 默认缓存原始响应和接口状态。研究中不要使用 `--no-cache`；`--dry-run` 只验证计划，不请求也不写入数据。
 - 入库失败、接口空返回、无权限或日期缺口必须作为数据缺口报告；不要把临时输出当成已缓存数据。
-- 使用前按问题检查证券代码映射、主键重复、日期连续性、空值、异常值、复权、停牌、单位、币种和最新可用日期。
+- 使用前检查代码、主键、日期、空值、复权因子、停牌、单位和最新日期；迁移只加字段，不代表历史数据已回填。
 - 记录数据库路径、使用表或 dataset、行数、`retrieved_at` 和最新日期，保证结果可复现。
 - 不用填充、删除或均值替代掩盖异常；先定位来源、定义、修订或时间口径。
 

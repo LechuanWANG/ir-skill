@@ -5,89 +5,118 @@ description: Evidence-led short-term trading research for one-month events, tech
 
 # 短期事件与交易研究
 
-用于一个月内以技术指标为主要筛选入口的短期交易、事件/宏观验证、动量、因子筛选、入场节奏和价格异动，以及以价格和事件执行为主的 1–3 个月问题。先读取共享的研究纪律与项目边界：[`../shared/research-discipline.md`](../shared/research-discipline.md)。
+用于约 5–20 个交易日的 `trade` 和约 20–60 个交易日的 `swing`。先读取 [`../shared/research-discipline.md`](../shared/research-discipline.md)；不评价长期价值。
 
-## 共享支持材料
+## 按需读取
 
-- 用户需要仓位、入场、止损、盈亏比或情绪执行纪律时，读取 [`../shared/trading-risk-discipline.md`](../shared/trading-risk-discipline.md)。
-- 获取公司、交易所、监管、政府或行业机构的网页、PDF、原始披露或政策资料时，读取 [`../shared/external-evidence-sources.md`](../shared/external-evidence-sources.md)。
-- 使用 TuShare、项目 SQLite 或结构化财务、宏观、行情和跨资产数据时，读取 [`../../references/tushare-data.md`](../../references/tushare-data.md)。
-- 用户要求保存、复用、历史复盘或 Wiki，或任务确有多阶段、交接、长命令和上下文压缩风险时，读取 [`../../references/persistence.md`](../../references/persistence.md)。
+- 数据与补全：[`../../references/tushare-data.md`](../../references/tushare-data.md)。
+- 公告、政策或事件核验：[`../shared/external-evidence-sources.md`](../shared/external-evidence-sources.md)。
+- 仓位、止损和执行：[`../shared/trading-risk-discipline.md`](../shared/trading-risk-discipline.md)。
+- 结论依赖 3–6 个月财务兑现：同时使用 [`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md)。
 
-若行动结论同时依赖 3–6 个月的基本面催化或财务兑现，同时调用 [`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md)。
+## 1. 全市场筛选
 
-## 研究方法
-
-用于一个月内以技术指标为主要筛选入口的短期交易、事件/宏观验证、动量、因子筛选、入场节奏和价格异动，以及以价格和事件执行为主的 1–3 个月问题。它不自动评价公司的长期价值。若行动结论同时依赖 3–6 个月的基本面催化或财务兑现，读取 [`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md)。
-
-### TuShare 数据调用包
-
-普通短线研究使用 TuShare 与项目 SQLite。先运行技术指标，再按事件和执行缺口选数：
+全市场找机会时先运行本地、时点一致的筛选：
 
 ```bash
-python3 scripts/tushare_mode_data.py indicators --symbol 000001.SZ --end-date 20260719
-python3 scripts/tushare_mode_data.py plan short --symbol 000001.SZ --end-date 20260719
-python3 scripts/tushare_mode_data.py fetch short --symbol 000001.SZ --end-date 20260719 --datasets limit_list limit_step money_flow
-python3 scripts/tushare_sector_data.py performance --provider ths --sector-type N --as-of 20260719 --sort-by return_5d
-python3 scripts/tushare_sector_data.py memberships --provider ths --stock-code 000001.SZ --as-of 20260719
+python3 scripts/short_term_screen.py screen --as-of 20260719 --profile trade --benchmark 000300.SH
 ```
 
-基础包覆盖日线、复权、基准、估值流动性、市场广度、资金、杠杆、涨跌停和龙虎榜。按问题扩展连板、题材板块、机构席位、筹码、因子、热度、游资和分钟数据。完整 key 与 endpoint 见 [`../../references/tushare-data.md`](../../references/tushare-data.md)。
+- 先看 `screen_status`、排除原因、数据缺口和现金比较；`no_edge_found` 时不得补足名单。
+- `screen` 只负责时点一致的候选发现；`evidence_ready` 仅表示机械筛选通过，不表示事件、预期差、定价或交易计划已经确认。
+- 推荐结果不会在本轮自动复盘，也不会读取历史推荐或用户执行记录。
+- 排名只在可投资股票池内使用综合可买性得分；相对强弱只占其中一部分，趋势、参与度、流动性和扣除追高风险后的价格质量保持独立，不重复计算同源指标。
+- 先看行业 `classification_source`；仅 `signal=significant` 才限定行业，快照分类不得用于历史归因。
+- 用户已给标的时可跳过全市场排名，但仍执行个股确认。
+- `screen` 回答“选什么”，不回答“何时买”；候选必须再映射到一个冻结的技术形态，禁止把排名直接当作入场信号。
 
-常规短线以 TuShare 与 SQLite 为数据边界。业绩公告直接驱动行情时核实该事件公告；盈利兑现成为 3–6 个月主线时切换中期研究。每次选择最小充分数据集，并记录 endpoint、`as_of`、空结果和错误分类。
+候选统一分为三类：
 
-短期候选依赖行业、题材、资金扩散或相对板块强弱时，技术指标之后必须分别读取同花顺 `sector-type I` 行业表现、`sector-type N` 概念表现与个股 `memberships`，不能把所有类型混成一张榜。没有本地板块数据时，使用 `tushare_sector_data.py plan/fetch` 补齐同一 `as_of` 的板块字典、日线和必要资金流；不得把单只股票涨跌、涨停标签或过期成分快照替代板块确认。东财和通达信只作为独立口径交叉验证，不与同花顺板块代码合并排序。
+- `A类：可执行候选`：机械筛选和追高风险门槛通过，可进入执行检查，但仍须等待原始价格触发、账户约束和可成交性确认。
+- `B类：研究合格但等待价格`：研究方向保留，但价格偏离、成交确认、波动或市场环境仍需改善，不追价。
+- `C类：强势观察对象`：相对强势仍在，但追高风险或其他硬门槛过高，只观察，不进入买入计划。
 
-### 选择时间路径
+计算追高风险时至少使用个股自身 120 日延伸分位、横截面延伸分位、ATR 标准化价格偏离、5 日相对 20 日收益加速度、开盘跳空、最近三日连续上涨、20 日价格位置和成交量异常。先执行硬门槛，再按相对强弱、趋势、成交、价格质量和流动性计算综合可买性；高涨幅不得通过其他分数抵消过度延伸或不可成交风险。
 
-- 短期候选筛选先运行技术指标，按趋势、动量、风险/位置、成交确认、相对表现和可执行流动性识别候选。宏观或行业传导链只用于解释技术候选、推断逻辑并验证其业务暴露与交易可行性，不能反过来替代初筛。
-- 已排期事件或明确市场状态可形成辅助假设；对技术候选核验行业映射、个股暴露和预期差，再判断其是否增强、削弱或不改变技术判断。
-- 1–3 个月重叠区间中，催化兑现主导时改用 [`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md)；价格与事件执行主导时使用本文件，并说明持有期和关键假设。
-- 纯技术/因子筛选可产生研究候选，但不能仅凭指标生成长期评级或个性化交易指令。
+## 2. 技术形态与个股确认
 
-### 宏观与行业传导验证
+只使用与策略合同匹配、能够历史重放的技术形态：
 
-在技术指标筛出的候选中，要用宏观/行业逻辑加以佐证，使用传导链推断其逻辑并验证可行性，例如：
+- `momentum_breakout`：相对强势、趋势支持、不过度延伸，并由下一交易日价格与参与度确认突破。
+- `trend_pullback`：趋势支持、回撤仍在结构内，并由下一交易日重新转强确认；不得把下跌本身当作低吸理由。
+- `event_continuation`：已核验事件、正向预期差和价格延续共同成立；没有时点一致的事件证据时不得使用。
 
-`技术指标筛出的候选 → 已核实/已排期事件或市场状态 → 相对共识的预期差 → 利率/汇率/商品/流动性/风险偏好 → 行业与价值链环节 → 个股实际收入/成本/订单/估值/资金暴露 → 可行性与价格成交确认 → 当前行动标签`
+MACD、RSI、布林带和均线是描述性状态，不是独立买卖信号。每个技术形态必须写明行为或资金假设、相对强弱、趋势结构、成交参与、延伸程度、可观察触发、价格失效、有效期和反证；任一关键项为 `unknown` 时不得输出 `优先行动`。
 
-同时写出至少一条反向链。每个关键箭头说明证据、方向、时间窗口和未知项；事件日程可以是事实，事件结果和市场反应只能写成情景。
+内部计算与兼容数据可以保留技术形态代码，但用户报告不得出现 `setup`、`setup_type`、`momentum_breakout`、`trend_pullback`、`event_continuation` 等原始字段或代码。报告统一使用“技术形态”以及“动量突破 / 趋势回踩 / 事件延续”等中文名称，并通过 `report` 或 `recommendation.report_card` 输出。
 
-- 对技术筛出的候选，比较受益、受损和影响不明确的行业，再核验个股实际暴露；不要为既有技术信号倒推故事。
-- 无法核验行业映射、关键箭头依赖传闻、公司实际暴露不足，或利好已充分定价时，不把事件链作为行动主因。
-- 找不到可靠事件时不要虚构催化；保留价格/流动性筛选，并明确结论仅由技术证据支持，不能宣称已获宏观或行业逻辑验证。
+对最终候选运行指标并读取相对基准、价格结构和数据覆盖：
 
-### 市场与技术确认
+```bash
+python3 scripts/tushare_mode_data.py indicators --symbol 000001.SZ --benchmark 000300.SH --end-date 20260719
+```
 
-对一个月内的个股候选比较、行动判断、入场节奏或价格条件问题，只要本地 SQLite 有截至 `as_of` 的可用日线，就必须先运行 `scripts/tushare_mode_data.py indicators --symbol <代码> --end-date <as_of>` 并读取 `technical_snapshot`，将其作为候选筛选的第一步。除当前趋势、动量、风险/位置和成交参与外，必须读取 `historical_price_structure`：先核验本地历史覆盖起点，再检查全可用历史、1 年和 3 年窗口的历史高点、距高点、最大回撤、年化路径和 `price_path_label`。缺少 1 年或 3 年窗口不能把较短缓存误称为对应历史；高低价尚未同步时，`historical_high_basis`/`historical_low_basis` 为收盘价回退，必须如实说明。数据缺失、过期或历史不足时，有限进行补全，并明确技术证据缺口；不得无声跳过。纯事实核验、基本面长期研究或与价格执行无关的问题不强制运行。
+核验事件的预期差、事件前涨幅、可交易时间、剩余驱动和反向情景；`known_event_count` 只是线索。过度延伸、赔率不足、成交未确认或关键数据缺失时移出名单或等待。指标输出会写入 `evidence.technical_snapshot.indicator_snapshot`，`confirm` 不得脱离该时点证据另编技术叙事。
 
-读取全部可用维度，但最终只引用会改变行动标签、价格条件、置信度或撤销条件的观察，避免堆叠高度相关指标：
+技术计算使用前复权价；报告中的触发、失效和委托价格必须使用当时未复权原始价。`execution_reference_available=false` 时可以继续研究，但 `execution_ready` 必须保持 `false`。
 
-- 趋势：区间收益、价格相对长短均线、均线排列、相对基准表现；
-- 动量：MACD 相对信号线的位置、柱体近期方向和最近交叉，RSI 当前区间与近期变化；
-- 风险与位置：波动、回撤、布林带位置和带宽，不把触及上下轨单独解释为反转；
-- 成交确认：量比、上涨日成交占比、量价相关、换手和可执行流动性；
-- 估值分位、行业与基准相对表现；
-- 停牌、新股、复权、涨跌停、T+1、交易成本、滑点和隔夜跳空风险。
+完整的结构化闭环分为三个显式阶段：
 
-对近期涨幅大、价格显著偏离均线或处于区间/估值高位的候选，增加“兑现程度”检查：
+```bash
+# 1) 先保存筛选证据（仅在需要跨命令继续时）
+python3 scripts/short_term_screen.py screen --as-of 20260719 --profile trade --save-run
 
-- 区分绝对股价与价格位置，结合近期涨幅、均线偏离、区间位置、成交变化、估值分位和事件前后表现判断市场已计入多少预期；
-- 写出持有期内仍可能推动上涨的可验证变量、兑现窗口和对应价格空间，并与失效位、交易成本及下行风险比较；
-- 剩余驱动缺乏证据，或潜在上行无法覆盖下行与成本时，将该候选移出最终名单并继续筛选。
+# 2) 为单个候选生成证据包；不会形成推荐
+python3 scripts/short_term_screen.py evidence \
+  --screen-run-id <screen-run-id> --symbol 000001.SZ \
+  --strategy-contract event_trade --save-run
 
-短期输出必须包含一段“技术确认”，记录指标最新交易日和复权口径，说明至少一个支持或确认观察，主动检查反向或未确认观察，并写清它们具体改变了什么；未发现明确反向时如实说明，不为满足格式制造冲突。若各维度冲突，保留冲突并降低行动强度，不做多数投票或综合打分；若技术面未改变结论，也明确写“未改变”及原因。不得只报“MACD 金叉”“RSI 超买/超卖”，必须结合变化方向、成交确认、事件窗口和价格结构解释。
+# 3) 用户或 Agent 提交结构化判断后，确认并写入推荐集合
+python3 scripts/short_term_screen.py confirm \
+  --evidence-run-id <evidence-run-id> --assessment assessment.json \
+  --project-dir <项目目录>
+```
 
-技术筛选成立但价格结构或成交未确认时，可等待价格。技术面走强而宏观/行业传导尚未核验时，不得虚构催化或将其写成行动主因；可保留明确标注为技术驱动的结论，并按未验证风险调整行动强度。若行动结论需要延续至中期催化兑现，且 [`../ir-medium-term-catalyst/SKILL.md`](../ir-medium-term-catalyst/SKILL.md) 的财务核验尚未完成，不得以短期价格走强替代。宏观或行业验证只能增强、削弱或限定技术判断；技术、风险收益和可执行性优于现金或替代项时，才提高行动强度。
+`confirm` 的输出是研究推荐，不是订单、持仓或用户已执行事实。非现金推荐会进入项目的 `data/research-library/tracking/research-watchlist.json`，同时在 SQLite 留下一条 `short_confirmation` 记录；这两个动作都不会创建复盘任务。
 
-### 因子与系统化筛选
+如果只想保存完整的当时判断，再显式加 `--save-decision`；不加时只保存推荐索引和行动条件。用户没有要求保存时，证据和判断可以只在本次输出中存在。
 
-计算前明确股票池、`as_of`、数据可得时间、持有期、基准、复权、再平衡和交易约束。检查未来函数、幸存者偏差、参数敏感性、行业暴露、换手成本、样本外表现和极端行情依赖。未通过检查的因子只作研究线索。
+## 3. 验证与执行
 
-本地指标可由 `scripts/tushare_mode_data.py indicators` 从已入库数据计算。优先读取其 `technical_snapshot`，需要核验数值或更长路径时再读取 `latest` 或用 `--output` 导出历史。`historical_price_structure` 的 `price_path_label` 用年化对数趋势与拟合度将路径描述为持续上涨、持续下跌、横盘/震荡或混合状态；它只帮助避免短周期信号掩盖长期价格结构，不是固定阈值、综合评分或自动交易信号。MACD、RSI、布林带、均线、波动和量价指标同样只是观察项。
+先审计数据是否可执行；`blocked_for_execution` 时只能研究，不能下单：
 
-### 异动归因与输出
+```bash
+python3 scripts/short_term_screen.py quality --as-of 20260719 --profile trade --benchmark 000300.SH
+```
 
-价格异动按基本面、估值/情绪、资金/流动性和未知因素组织，说明证据和时间顺序。归因本身不自动回答是否买入；只有用户提出比较或行动问题时，才进入主 Skill 的决策纪律。
+修改筛选阈值或将其作为稳定策略前，运行历史回放并保留样本外区间：
 
-行动结论补充明确的触发条件、失效条件、最长观察/持有窗口和复核事件。用户未提供风险预算、持仓和交易成本时，不虚构精确仓位或止损比例。
+```bash
+python3 scripts/short_term_screen.py backtest --start-date 20240101 --end-date 20260719 --out-of-sample-start 20260101 --profile trade --save-run
+```
+
+先看 `inference.status`：`exploratory`、样本缺失或远期结果未成熟时不得宣称策略有效，也不得在同一留出区间继续调参。回放先产生候选，再重放技术形态触发、未触发、价格失效和时间退出；`trigger_replay.no_trade_is_counted` 必须为真，并分别报告 A/B/C 三类的入选数、触发数、未触发数和成本后表现。日线回放只能把开盘跳空按开盘价处理，把盘中穿越视作预先挂出的触发单，并在 `trigger_replay.execution_assumption` 公开该假设；没有分钟或逐笔数据时不得宣称真实成交。事件、预期差和 Agent 判断没有历史时点证据时不伪造重放。
+
+除均值、胜率和 MAE/MFE 外，检查成本后期望、平均盈亏、赔率、利润因子、5% 尾部收益、最大连续亏损和均值区间；按开发/样本外、候选等级、市场环境、流动性和波动分层。逐层比较“相对强弱基线 → 趋势 → 技术形态触发 → 参与度 → 反追高约束”，没有稳定增量贡献的指标不进入合同。
+
+`优先行动` 还要求 `readiness.personal_investor_controls=pass`：至少记录决策频率、最大持仓数、单笔风险预算、组合 heat 上限、单日新增交易上限、隔夜跳空缓冲和最低流动性倍数；选择现金不要求这些参数。用户提供账户、风险预算、原始入场价、原始失效价和上限后，才运行 `short_term_screen.py risk`。需要时同时提供当前组合热度及上限、持仓数及上限、20 日中位成交额和单笔成交额占比上限；任何组合或流动性硬约束触发时仓位为零。`plan_ready=true` 只表示风险参数形成了合格计划，`execution_ready` 仍为 `false`，直到账户、实时原始价和委托可成交性在执行层另行核验。最终使用 `recommendation.report_card` 输出行动标签、候选等级、技术形态、行为假设、主导驱动、技术确认、已定价程度、原始价触发/失效、赔率、追高风险、最长持有期、仓位状态和复核时间；没有 A 类候选时不得为了填满名单强行行动。
+
+## 4. 推荐集合与可选复盘
+
+查看已保存的推荐只读取索引，不复用旧论点，也不触发复盘：
+
+```bash
+python3 scripts/short_term_screen.py recommendations --project-dir <项目目录>
+```
+
+只有用户明确要求复盘时才运行：
+
+```bash
+python3 scripts/short_term_screen.py review \
+  --recommendation-run-id <recommendation-run-id> \
+  --review-as-of 20260819 \
+  --assessment review.json \
+  --save-run
+```
+
+复盘分为研究结果和执行结果：没有用户提供真实交易信息时，`execution_status=not_observed`，只计算事件结果、触发/失效、标的远期收益、基准超额收益、MAE/MFE；这些是研究路径结果，不是账户收益。未调用 `review` 时，`review_status` 不会被系统自动生成。

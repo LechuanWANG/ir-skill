@@ -35,6 +35,11 @@ PERFORMANCE_SORT_FIELDS = (
     "amount",
     "net_amount",
 )
+ROTATION_SORT_FIELDS = (
+    "rank_change_5d",
+    "return_5d_change",
+    *PERFORMANCE_SORT_FIELDS,
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,46 @@ def _preview(frame: pd.DataFrame, rows: int) -> list[dict[str, Any]]:
     return json.loads(
         frame.head(rows).to_json(orient="records", force_ascii=False, date_format="iso")
     )
+
+
+def _window_return(history: pd.DataFrame, window: int) -> float | None:
+    """Return the close-to-close percentage change across stored trading sessions."""
+    if len(history) <= window:
+        return None
+    previous_close = pd.to_numeric(history.iloc[-(window + 1)]["close"], errors="coerce")
+    latest_close = pd.to_numeric(history.iloc[-1]["close"], errors="coerce")
+    if pd.isna(previous_close) or pd.isna(latest_close) or previous_close == 0:
+        return None
+    return (float(latest_close) / float(previous_close) - 1.0) * 100.0
+
+
+def _breadth_snapshot(frame: pd.DataFrame) -> dict[str, int | float | None]:
+    daily_returns = pd.to_numeric(frame.get("pct_chg"), errors="coerce")
+    return {
+        "sector_count": int(len(frame)),
+        "advancers": int((daily_returns > 0).sum()),
+        "decliners": int((daily_returns < 0).sum()),
+        "unchanged": int((daily_returns == 0).sum()),
+        "missing_returns": int(daily_returns.isna().sum()),
+        "median_pct_chg": float(daily_returns.median()) if daily_returns.notna().any() else None,
+    }
+
+
+def _breadth_change(
+    current: dict[str, int | float | None],
+    previous: dict[str, int | float | None] | None,
+) -> dict[str, int | float | None] | None:
+    if previous is None:
+        return None
+    change: dict[str, int | float | None] = {}
+    for key in current:
+        current_value = current[key]
+        previous_value = previous.get(key)
+        if current_value is None or previous_value is None:
+            change[key] = None
+        else:
+            change[key] = current_value - previous_value
+    return change
 
 
 def _selected_datasets(provider: str, requested: Sequence[str] | None) -> tuple[str, ...]:
@@ -305,6 +350,7 @@ def _run_catalog(_: argparse.Namespace) -> int:
                 "plan": "Plan provider-specific requests without reading a token.",
                 "fetch": "Fetch and normalize sector master, daily, flow, and membership data.",
                 "performance": "Rank locally stored sector performance with 5/20-session context.",
+                "rotation": "Compare sector price, strength-rank, and breadth changes across sessions.",
                 "memberships": "Resolve locally stored stock-to-sector or sector-to-stock membership.",
             },
         }
@@ -499,13 +545,7 @@ def summarize_sector_performance(
             continue
         record = latest.to_dict()
         for window in (5, 20):
-            value = None
-            if len(history) > window:
-                previous_close = history.iloc[-(window + 1)]["close"]
-                latest_close = latest["close"]
-                if pd.notna(previous_close) and pd.notna(latest_close) and previous_close != 0:
-                    value = (float(latest_close) / float(previous_close) - 1.0) * 100.0
-            record[f"return_{window}d"] = value
+            record[f"return_{window}d"] = _window_return(history, window)
         record["sector_code"] = sector_code
         records.append(record)
     ranking = pd.DataFrame(records)
@@ -515,15 +555,7 @@ def summarize_sector_performance(
         raise ValueError(f"sort field is unavailable: {sort_by}")
     ranking = ranking.sort_values(sort_by, ascending=not descending, na_position="last").head(limit)
     effective_cross_section = pd.DataFrame(records)
-    daily_returns = pd.to_numeric(effective_cross_section["pct_chg"], errors="coerce")
-    breadth = {
-        "sector_count": int(len(effective_cross_section)),
-        "advancers": int((daily_returns > 0).sum()),
-        "decliners": int((daily_returns < 0).sum()),
-        "unchanged": int((daily_returns == 0).sum()),
-        "missing_returns": int(daily_returns.isna().sum()),
-        "median_pct_chg": float(daily_returns.median()) if daily_returns.notna().any() else None,
-    }
+    breadth = _breadth_snapshot(effective_cross_section)
     output_columns = [
         "sector_code",
         "sector_name",
@@ -568,6 +600,167 @@ def summarize_sector_performance(
     }
 
 
+def summarize_sector_rotation(
+    frame: pd.DataFrame,
+    *,
+    as_of: str,
+    provider: str,
+    sort_by: str = "rank_change_5d",
+    limit: int = DEFAULT_RANKING_LIMIT,
+) -> dict[str, Any]:
+    """Compare the latest two stored sector cross-sections without producing a trade signal."""
+    if frame.empty:
+        return {
+            "operation": "rotation",
+            "provider": provider,
+            "as_of": as_of,
+            "status": "no_data",
+            "effective_trade_date": None,
+            "previous_effective_trade_date": None,
+            "top_changes": [],
+            "bottom_changes": [],
+        }
+    if sort_by not in ROTATION_SORT_FIELDS:
+        raise ValueError(f"rotation sort field is unavailable: {sort_by}")
+
+    working = frame.copy()
+    working["trade_date"] = pd.to_datetime(working["trade_date"], errors="coerce")
+    working = working.loc[working["trade_date"].notna()].copy()
+    if working.empty:
+        raise ValueError("sector data contains no valid trade_date values")
+    for column in ("close", "pct_chg", "amount", "net_amount"):
+        working[column] = pd.to_numeric(working[column], errors="coerce")
+
+    effective_date = working["trade_date"].max()
+    earlier_dates = working.loc[working["trade_date"] < effective_date, "trade_date"]
+    previous_date = earlier_dates.max() if not earlier_dates.empty else None
+    current_records: list[dict[str, Any]] = []
+    previous_records: list[dict[str, Any]] = []
+
+    for (_, sector_code), history in working.groupby(["provider", "sector_code"], sort=False):
+        history = history.sort_values("trade_date")
+        current_history = history.loc[history["trade_date"] <= effective_date]
+        if current_history.empty or current_history.iloc[-1]["trade_date"] != effective_date:
+            continue
+        current = current_history.iloc[-1].to_dict()
+        current["sector_code"] = sector_code
+        current["return_5d"] = _window_return(current_history, 5)
+        current["return_20d"] = _window_return(current_history, 20)
+
+        if previous_date is not None:
+            previous_history = history.loc[history["trade_date"] <= previous_date]
+            if not previous_history.empty and previous_history.iloc[-1]["trade_date"] == previous_date:
+                previous = previous_history.iloc[-1].to_dict()
+                previous["sector_code"] = sector_code
+                previous["return_5d"] = _window_return(previous_history, 5)
+                previous_records.append(previous)
+                current["previous_pct_chg"] = previous["pct_chg"]
+                current["pct_chg_change"] = (
+                    float(current["pct_chg"] - previous["pct_chg"])
+                    if pd.notna(current["pct_chg"]) and pd.notna(previous["pct_chg"])
+                    else None
+                )
+                current["previous_return_5d"] = previous["return_5d"]
+                current["return_5d_change"] = (
+                    float(current["return_5d"] - previous["return_5d"])
+                    if current["return_5d"] is not None and previous["return_5d"] is not None
+                    else None
+                )
+            else:
+                current["previous_pct_chg"] = None
+                current["pct_chg_change"] = None
+                current["previous_return_5d"] = None
+                current["return_5d_change"] = None
+        else:
+            current["previous_pct_chg"] = None
+            current["pct_chg_change"] = None
+            current["previous_return_5d"] = None
+            current["return_5d_change"] = None
+        current_records.append(current)
+
+    current_cross_section = pd.DataFrame(current_records)
+    if current_cross_section.empty:
+        raise ValueError("no sector rows share the latest effective trade date")
+    previous_cross_section = pd.DataFrame(previous_records)
+    current_cross_section["rank_5d"] = current_cross_section["return_5d"].rank(
+        ascending=False,
+        method="min",
+    )
+    if previous_cross_section.empty:
+        current_cross_section["previous_rank_5d"] = None
+        current_cross_section["rank_change_5d"] = None
+        previous_breadth = None
+    else:
+        previous_cross_section["rank_5d"] = previous_cross_section["return_5d"].rank(
+            ascending=False,
+            method="min",
+        )
+        previous_ranks = previous_cross_section.set_index("sector_code")["rank_5d"]
+        current_cross_section["previous_rank_5d"] = current_cross_section["sector_code"].map(
+            previous_ranks
+        )
+        current_cross_section["rank_change_5d"] = (
+            current_cross_section["previous_rank_5d"] - current_cross_section["rank_5d"]
+        )
+        previous_breadth = _breadth_snapshot(previous_cross_section)
+
+    current_breadth = _breadth_snapshot(current_cross_section)
+    output_columns = [
+        "sector_code",
+        "sector_name",
+        "sector_type",
+        "trade_date",
+        "close",
+        "pct_chg",
+        "previous_pct_chg",
+        "pct_chg_change",
+        "return_5d",
+        "previous_return_5d",
+        "return_5d_change",
+        "rank_5d",
+        "previous_rank_5d",
+        "rank_change_5d",
+        "return_20d",
+        "turnover_rate",
+        "company_num",
+        "lead_stock",
+        "lead_stock_pct_chg",
+        "net_amount",
+    ]
+    existing_columns = [column for column in output_columns if column in current_cross_section.columns]
+    top_changes = _preview(
+        current_cross_section.sort_values(sort_by, ascending=False, na_position="last")[existing_columns],
+        limit,
+    )
+    bottom_changes = _preview(
+        current_cross_section.sort_values(sort_by, ascending=True, na_position="last")[existing_columns],
+        limit,
+    )
+    return {
+        "operation": "rotation",
+        "provider": provider,
+        "as_of": as_of,
+        "status": "available",
+        "effective_trade_date": effective_date.date().isoformat(),
+        "previous_effective_trade_date": (
+            previous_date.date().isoformat() if previous_date is not None else None
+        ),
+        "sort_by": sort_by,
+        "rank_change_interpretation": "positive means the sector's 5-day return rank improved",
+        "breadth": current_breadth,
+        "previous_breadth": previous_breadth,
+        "breadth_change": _breadth_change(current_breadth, previous_breadth),
+        "coverage": {
+            "current_sector_count": int(len(current_cross_section)),
+            "previous_sector_count": int(len(previous_cross_section)),
+            "with_5d_rank_change": int(current_cross_section["rank_change_5d"].notna().sum()),
+            "with_moneyflow": int(current_cross_section["net_amount"].notna().sum()),
+        },
+        "top_changes": top_changes,
+        "bottom_changes": bottom_changes,
+    }
+
+
 def select_performance_universe(frame: pd.DataFrame, universe: str) -> pd.DataFrame:
     if universe == "all" or frame.empty:
         return frame
@@ -603,6 +796,32 @@ def _run_performance(args: argparse.Namespace) -> int:
         provider=args.provider,
         sort_by=args.sort_by,
         descending=args.direction == "desc",
+        limit=args.limit,
+    )
+    payload["sector_type"] = args.sector_type
+    payload["universe"] = universe
+    payload["database_path"] = str(args.db_path)
+    _print_json(payload)
+    return 0
+
+
+def _run_rotation(args: argparse.Namespace) -> int:
+    frame = load_sector_daily_history(
+        db_path=args.db_path,
+        provider=args.provider,
+        end_date=args.as_of,
+        sector_type=args.sector_type,
+        sector_codes=args.sector_codes,
+    )
+    universe = args.universe
+    if universe == "auto":
+        universe = "industry-flow" if args.provider == "ths" and args.sector_type == "I" else "all"
+    frame = select_performance_universe(frame, universe)
+    payload = summarize_sector_rotation(
+        frame,
+        as_of=args.as_of,
+        provider=args.provider,
+        sort_by=args.sort_by,
         limit=args.limit,
     )
     payload["sector_type"] = args.sector_type
@@ -717,6 +936,28 @@ def build_parser() -> argparse.ArgumentParser:
     performance_parser.add_argument("--limit", type=_positive_int, default=DEFAULT_RANKING_LIMIT)
     performance_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
 
+    rotation_parser = subparsers.add_parser(
+        "rotation",
+        help="Compare current and previous stored sector performance cross-sections",
+    )
+    rotation_parser.add_argument("--provider", choices=tuple(PROVIDER_SPECS), default=DEFAULT_PROVIDER)
+    rotation_parser.add_argument("--as-of", type=_date, required=True)
+    rotation_parser.add_argument(
+        "--sector-type",
+        default="I",
+        help="Provider-specific type; THS defaults to I (industry), use N for concepts",
+    )
+    rotation_parser.add_argument("--sector-codes", nargs="+")
+    rotation_parser.add_argument(
+        "--universe",
+        choices=("auto", "industry-flow", "all"),
+        default="auto",
+        help="Auto uses THS industry-flow coverage for type I and all codes otherwise",
+    )
+    rotation_parser.add_argument("--sort-by", choices=ROTATION_SORT_FIELDS, default="rank_change_5d")
+    rotation_parser.add_argument("--limit", type=_positive_int, default=DEFAULT_RANKING_LIMIT)
+    rotation_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
+
     memberships_parser = subparsers.add_parser(
         "memberships",
         help="Resolve locally cached stock-to-sector or sector-to-stock membership",
@@ -749,6 +990,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_fetch(args)
         if args.command == "performance":
             return _run_performance(args)
+        if args.command == "rotation":
+            return _run_rotation(args)
         if args.command == "memberships":
             return _run_memberships(args)
         return _run_master(args)

@@ -68,6 +68,7 @@ def calculate_technical_indicators(
     close_prices: pd.Series,
     volumes: pd.Series | None = None,
     *,
+    benchmark_prices: pd.Series | None = None,
     high_prices: pd.Series | None = None,
     low_prices: pd.Series | None = None,
     settings: TechnicalIndicatorSettings = TechnicalIndicatorSettings(),
@@ -142,6 +143,14 @@ def calculate_technical_indicators(
     result[f"price_vs_sma_{settings.sma_short}"] = (prices / rolling_short) - 1
     result[f"price_vs_sma_{settings.sma_long}"] = (prices / rolling_long) - 1
     result[f"return_{settings.sma_short}d"] = prices.pct_change(settings.sma_short, fill_method=None)
+    if benchmark_prices is not None:
+        benchmark = _numeric_series(benchmark_prices).reindex(prices.index)
+        benchmark_return = benchmark.pct_change(settings.sma_short, fill_method=None)
+        result["benchmark_close"] = benchmark
+        result[f"benchmark_return_{settings.sma_short}d"] = benchmark_return
+        result[f"relative_return_{settings.sma_short}d"] = (
+            result[f"return_{settings.sma_short}d"] - benchmark_return
+        )
     result[f"volatility_{settings.sma_short}d_annualized"] = (
         returns.rolling(settings.sma_short, min_periods=settings.sma_short).std(ddof=0) * sqrt(TRADING_DAYS_PER_YEAR)
     )
@@ -464,6 +473,12 @@ def summarize_technical_indicators(
         "trend": {
             "close_qfq": value("close_qfq"),
             f"return_{settings.sma_short}d": value(f"return_{settings.sma_short}d"),
+            f"benchmark_return_{settings.sma_short}d": value(
+                f"benchmark_return_{settings.sma_short}d"
+            ),
+            f"relative_return_{settings.sma_short}d": value(
+                f"relative_return_{settings.sma_short}d"
+            ),
             f"price_vs_sma_{settings.sma_short}": value(f"price_vs_sma_{settings.sma_short}"),
             f"price_vs_sma_{settings.sma_long}": value(f"price_vs_sma_{settings.sma_long}"),
             "sma_alignment": sma_alignment,

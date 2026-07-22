@@ -17,6 +17,7 @@ from market_data_store import (
     DEFAULT_DB_PATH,
     load_daily_matrices,
     load_daily_price_history,
+    load_index_daily_history,
     load_normalized_endpoint_dates,
     load_research_observations,
     load_research_observation_dates,
@@ -1514,9 +1515,19 @@ def _run_indicators(args: argparse.Namespace) -> int:
     price_history = price_history.set_index("trade_date") if not price_history.empty else price_history
     high_prices = price_history["high_qfq"].reindex(close_prices.index) if "high_qfq" in price_history else None
     low_prices = price_history["low_qfq"].reindex(close_prices.index) if "low_qfq" in price_history else None
+    benchmark_history = load_index_daily_history(
+        db_path=args.db_path,
+        benchmark=args.benchmark,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
+    benchmark_prices = None
+    if not benchmark_history.empty:
+        benchmark_prices = benchmark_history.set_index("trade_date")["close"]
     indicators = calculate_technical_indicators(
         close_prices,
         volume_series,
+        benchmark_prices=benchmark_prices,
         high_prices=high_prices,
         low_prices=low_prices,
         settings=settings,
@@ -1532,6 +1543,8 @@ def _run_indicators(args: argparse.Namespace) -> int:
     payload = {
         "operation": "indicators",
         "symbol": args.symbol,
+        "benchmark": args.benchmark,
+        "benchmark_status": "available" if benchmark_prices is not None else "missing",
         "price_basis": (
             "forward-adjusted close (close_qfq), with intraday high/low when available, from local SQLite"
         ),
@@ -1613,6 +1626,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Calculate reproducible technical indicators from locally stored forward-adjusted daily data",
     )
     indicators_parser.add_argument("--symbol", type=_symbol, required=True, help="TuShare ts_code, such as 000001.SZ")
+    indicators_parser.add_argument(
+        "--benchmark",
+        type=_symbol,
+        default=DEFAULT_BENCHMARK,
+        help=f"Stored index used for relative return (default: {DEFAULT_BENCHMARK})",
+    )
     indicators_parser.add_argument("--start-date", type=_date, help="Optional earliest stored trade date to include")
     indicators_parser.add_argument("--end-date", type=_date, required=True, help="YYYYMMDD research as_of date")
     indicators_parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)

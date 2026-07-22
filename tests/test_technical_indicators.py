@@ -71,6 +71,21 @@ class TechnicalIndicatorSnapshotTests(unittest.TestCase):
         self.assertIn("participation", snapshot["missing_dimensions"])
         self.assertNotIn("participation", snapshot["available_dimensions"])
 
+    def test_reports_return_relative_to_a_benchmark(self) -> None:
+        index = pd.date_range("2025-01-02", periods=80, freq="B", name="trade_date")
+        stock = pd.Series([100 * (1.003**position) for position in range(len(index))], index=index)
+        benchmark = pd.Series([100 * (1.001**position) for position in range(len(index))], index=index)
+
+        indicators = calculate_technical_indicators(
+            stock,
+            benchmark_prices=benchmark,
+            settings=self.settings,
+        )
+        trend = summarize_technical_indicators(indicators, settings=self.settings)["dimensions"]["trend"]
+
+        self.assertGreater(trend["relative_return_20d"], 0)
+        self.assertGreater(trend["return_20d"], trend["benchmark_return_20d"])
+
     def test_rejects_empty_history(self) -> None:
         with self.assertRaisesRegex(ValueError, "empty technical-indicator history"):
             summarize_technical_indicators(pd.DataFrame(), settings=self.settings)
@@ -141,6 +156,30 @@ class TechnicalIndicatorSnapshotTests(unittest.TestCase):
             history = load_daily_price_history(db_path=db_path, symbols=["000001.SZ"])
             self.assertEqual(history.loc[0, "high_qfq"], 10.5)
             self.assertEqual(history.loc[0, "low_qfq"], 9.5)
+
+    def test_raw_prices_and_adjustment_factors_override_inconsistent_incremental_qfq(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "market.sqlite"
+            index = pd.DatetimeIndex(
+                [pd.Timestamp("2026-06-01"), pd.Timestamp("2026-06-02")],
+                name="trade_date",
+            )
+            cached_qfq = pd.DataFrame({"000001.SZ": [100.0, 50.0]}, index=index)
+            raw_close = pd.DataFrame({"000001.SZ": [100.0, 50.0]}, index=index)
+            factors = pd.DataFrame({"000001.SZ": [1.0, 2.0]}, index=index)
+            volumes = pd.DataFrame({"000001.SZ": [1_000_000, 1_000_000]}, index=index)
+            write_daily_market_data(
+                cached_qfq,
+                volumes,
+                raw_close_prices=raw_close,
+                adjustment_factors=factors,
+                db_path=db_path,
+                source="test",
+            )
+
+            history = load_daily_price_history(db_path=db_path, symbols=["000001.SZ"])
+            self.assertEqual(history["close_qfq"].tolist(), [50.0, 50.0])
+            self.assertEqual(history["close_raw"].tolist(), [100.0, 50.0])
 
     def test_indicators_command_reads_sqlite_and_emits_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
