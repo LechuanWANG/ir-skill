@@ -52,6 +52,8 @@ CHIP_DISTRIBUTION_TABLE = "chip_distribution_daily"
 FACTOR_DAILY_TABLE = "factor_daily"
 INSTITUTIONAL_RESEARCH_TABLE = "institutional_research"
 CORPORATE_EVENTS_TABLE = "corporate_events"
+SHORT_SCREEN_RUN_TABLE = "short_screen_run"
+SHORT_SCREEN_OUTCOME_TABLE = "short_screen_outcome"
 NORMALIZED_ENDPOINT_DATE_TABLES = {
     "daily": DAILY_TABLE,
     "daily_basic": DAILY_BASIC_TABLE,
@@ -273,23 +275,23 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS {DAILY_TABLE} (
             trade_date TEXT NOT NULL,
             ts_code TEXT NOT NULL,
+            open_qfq REAL,
             close_qfq REAL,
             high_qfq REAL,
             low_qfq REAL,
+            open_raw REAL,
+            close_raw REAL,
+            high_raw REAL,
+            low_raw REAL,
+            adj_factor REAL,
             volume REAL,
+            amount REAL,
             source TEXT NOT NULL,
             retrieved_at TEXT NOT NULL,
             PRIMARY KEY (trade_date, ts_code)
         )
         """
     )
-    daily_columns = {
-        str(row[1])
-        for row in connection.execute(f"PRAGMA table_info({DAILY_TABLE})")
-    }
-    for column in ("high_qfq", "low_qfq"):
-        if column not in daily_columns:
-            connection.execute(f"ALTER TABLE {DAILY_TABLE} ADD COLUMN {column} REAL")
     connection.execute(
         f"""
         CREATE INDEX IF NOT EXISTS idx_{DAILY_TABLE}_ts_code_date
@@ -367,6 +369,8 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             industry TEXT,
             market TEXT,
             list_date TEXT,
+            list_status TEXT,
+            delist_date TEXT,
             source TEXT NOT NULL,
             retrieved_at TEXT NOT NULL
         )
@@ -702,10 +706,14 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     apply_market_data_migrations(
         connection,
         tables=MarketDataTableNames(
+            daily=DAILY_TABLE,
+            stock_basic=STOCK_BASIC_TABLE,
             sector_master=SECTOR_MASTER_TABLE,
             sector_daily=SECTOR_DAILY_TABLE,
             sector_flow_daily=SECTOR_FLOW_DAILY_TABLE,
             sector_membership=SECTOR_MEMBERSHIP_TABLE,
+            short_screen_run=SHORT_SCREEN_RUN_TABLE,
+            short_screen_outcome=SHORT_SCREEN_OUTCOME_TABLE,
         ),
     )
 
@@ -1255,16 +1263,28 @@ def write_daily_market_data(
     prices: pd.DataFrame,
     volumes: pd.DataFrame,
     *,
+    open_prices: pd.DataFrame | None = None,
     high_prices: pd.DataFrame | None = None,
     low_prices: pd.DataFrame | None = None,
+    amounts: pd.DataFrame | None = None,
+    raw_open_prices: pd.DataFrame | None = None,
+    raw_close_prices: pd.DataFrame | None = None,
+    raw_high_prices: pd.DataFrame | None = None,
+    raw_low_prices: pd.DataFrame | None = None,
+    adjustment_factors: pd.DataFrame | None = None,
     db_path: Path = DEFAULT_DB_PATH,
     source: str = "tushare",
     retrieved_at: str | None = None,
 ) -> int:
-    """Upsert forward-adjusted daily close, high, low, and volume into SQLite."""
+    """Upsert adjusted OHLC and the raw-price/adjustment contract used to restate it."""
     price_rows = _matrix_to_long(prices, "close_qfq")
     volume_rows = _matrix_to_long(volumes, "volume")
     daily = price_rows.merge(volume_rows, on=["trade_date", "ts_code"], how="outer")
+    if open_prices is not None:
+        open_rows = _matrix_to_long(open_prices, "open_qfq")
+        daily = daily.merge(open_rows, on=["trade_date", "ts_code"], how="outer")
+    else:
+        daily["open_qfq"] = None
     if high_prices is not None:
         high_rows = _matrix_to_long(high_prices, "high_qfq")
         daily = daily.merge(high_rows, on=["trade_date", "ts_code"], how="outer")
@@ -1275,6 +1295,27 @@ def write_daily_market_data(
         daily = daily.merge(low_rows, on=["trade_date", "ts_code"], how="outer")
     else:
         daily["low_qfq"] = None
+    if amounts is not None:
+        amount_rows = _matrix_to_long(amounts, "amount")
+        daily = daily.merge(amount_rows, on=["trade_date", "ts_code"], how="outer")
+    else:
+        daily["amount"] = None
+    optional_matrices = (
+        (raw_open_prices, "open_raw"),
+        (raw_close_prices, "close_raw"),
+        (raw_high_prices, "high_raw"),
+        (raw_low_prices, "low_raw"),
+        (adjustment_factors, "adj_factor"),
+    )
+    for matrix, column in optional_matrices:
+        if matrix is not None:
+            daily = daily.merge(
+                _matrix_to_long(matrix, column),
+                on=["trade_date", "ts_code"],
+                how="outer",
+            )
+        else:
+            daily[column] = None
     if daily.empty:
         ensure_database(db_path)
         return 0
@@ -1284,10 +1325,17 @@ def write_daily_market_data(
         (
             normalize_trade_date(row.trade_date),
             str(row.ts_code),
+            _float_or_none(row.open_qfq),
             _float_or_none(row.close_qfq),
             _float_or_none(row.high_qfq),
             _float_or_none(row.low_qfq),
+            _float_or_none(row.open_raw),
+            _float_or_none(row.close_raw),
+            _float_or_none(row.high_raw),
+            _float_or_none(row.low_raw),
+            _float_or_none(row.adj_factor),
             _float_or_none(row.volume),
+            _float_or_none(row.amount),
             source,
             timestamp,
         )
@@ -1300,13 +1348,22 @@ def write_daily_market_data(
         connection.executemany(
             f"""
             INSERT INTO {DAILY_TABLE}
-                (trade_date, ts_code, close_qfq, high_qfq, low_qfq, volume, source, retrieved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (trade_date, ts_code, open_qfq, close_qfq, high_qfq, low_qfq,
+                 open_raw, close_raw, high_raw, low_raw, adj_factor,
+                 volume, amount, source, retrieved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(trade_date, ts_code) DO UPDATE SET
+                open_qfq = COALESCE(excluded.open_qfq, {DAILY_TABLE}.open_qfq),
                 close_qfq = excluded.close_qfq,
                 high_qfq = COALESCE(excluded.high_qfq, {DAILY_TABLE}.high_qfq),
                 low_qfq = COALESCE(excluded.low_qfq, {DAILY_TABLE}.low_qfq),
+                open_raw = COALESCE(excluded.open_raw, {DAILY_TABLE}.open_raw),
+                close_raw = COALESCE(excluded.close_raw, {DAILY_TABLE}.close_raw),
+                high_raw = COALESCE(excluded.high_raw, {DAILY_TABLE}.high_raw),
+                low_raw = COALESCE(excluded.low_raw, {DAILY_TABLE}.low_raw),
+                adj_factor = COALESCE(excluded.adj_factor, {DAILY_TABLE}.adj_factor),
                 volume = excluded.volume,
+                amount = COALESCE(excluded.amount, {DAILY_TABLE}.amount),
                 source = excluded.source,
                 retrieved_at = excluded.retrieved_at
             """,
@@ -1447,6 +1504,8 @@ def write_stock_basic(
                 _text_or_none(row.get("industry")),
                 _text_or_none(row.get("market")),
                 _normalize_optional_date(row.get("list_date")),
+                _text_or_none(row.get("list_status")),
+                _normalize_optional_date(row.get("delist_date")),
                 source,
                 timestamp,
             )
@@ -1458,13 +1517,15 @@ def write_stock_basic(
         connection.executemany(
             f"""
             INSERT INTO {STOCK_BASIC_TABLE}
-                (ts_code, name, industry, market, list_date, source, retrieved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (ts_code, name, industry, market, list_date, list_status, delist_date, source, retrieved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ts_code) DO UPDATE SET
                 name = excluded.name,
                 industry = excluded.industry,
                 market = excluded.market,
                 list_date = excluded.list_date,
+                list_status = COALESCE(excluded.list_status, {STOCK_BASIC_TABLE}.list_status),
+                delist_date = COALESCE(excluded.delist_date, {STOCK_BASIC_TABLE}.delist_date),
                 source = excluded.source,
                 retrieved_at = excluded.retrieved_at
             """,
@@ -2126,6 +2187,7 @@ def load_daily_matrices(
     db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
 
     where: list[str] = []
     params: list[str] = []
@@ -2144,7 +2206,7 @@ def load_daily_matrices(
 
     predicate = f"WHERE {' AND '.join(where)}" if where else ""
     query = f"""
-        SELECT trade_date, ts_code, close_qfq, volume
+        SELECT trade_date, ts_code, close_qfq, close_raw, adj_factor, volume
         FROM {DAILY_TABLE}
         {predicate}
         ORDER BY trade_date, ts_code
@@ -2158,6 +2220,7 @@ def load_daily_matrices(
         empty_index = pd.DatetimeIndex([], name="trade_date")
         return pd.DataFrame(index=empty_index), pd.DataFrame(index=empty_index)
 
+    frame = _restate_qfq_from_raw(frame)
     prices = frame.pivot(index="trade_date", columns="ts_code", values="close_qfq").sort_index()
     volumes = frame.pivot(index="trade_date", columns="ts_code", values="volume").sort_index()
     prices = prices.sort_index(axis=1)
@@ -2165,6 +2228,30 @@ def load_daily_matrices(
     prices.columns.name = None
     volumes.columns.name = None
     return prices, volumes
+
+
+def _restate_qfq_from_raw(frame: pd.DataFrame) -> pd.DataFrame:
+    """Restate cached qfq fields to one query-end factor when raw inputs are available."""
+    if frame.empty or "adj_factor" not in frame.columns:
+        return frame
+    working = frame.copy()
+    factors = pd.to_numeric(working["adj_factor"], errors="coerce")
+    latest_factor = factors.groupby(working["ts_code"]).transform(
+        lambda values: values.dropna().iloc[-1] if values.notna().any() else float("nan")
+    )
+    for raw_column, adjusted_column in (
+        ("open_raw", "open_qfq"),
+        ("close_raw", "close_qfq"),
+        ("high_raw", "high_qfq"),
+        ("low_raw", "low_qfq"),
+    ):
+        if raw_column not in working.columns or adjusted_column not in working.columns:
+            continue
+        raw = pd.to_numeric(working[raw_column], errors="coerce")
+        restated = raw * factors / latest_factor
+        usable = raw.notna() & factors.notna() & latest_factor.notna() & latest_factor.ne(0)
+        working.loc[usable, adjusted_column] = restated.loc[usable]
+    return working
 
 
 def load_daily_price_history(
@@ -2178,6 +2265,7 @@ def load_daily_price_history(
     db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
 
     where: list[str] = []
     params: list[str] = []
@@ -2196,14 +2284,331 @@ def load_daily_price_history(
 
     predicate = f"WHERE {' AND '.join(where)}" if where else ""
     query = f"""
-        SELECT trade_date, ts_code, close_qfq, high_qfq, low_qfq
+        SELECT trade_date, ts_code,
+               open_qfq, close_qfq, high_qfq, low_qfq,
+               open_raw, close_raw, high_raw, low_raw, adj_factor,
+               volume, amount
         FROM {DAILY_TABLE}
         {predicate}
         ORDER BY trade_date, ts_code
     """
     with closing(sqlite3.connect(db_path)) as connection:
         ensure_schema(connection)
-        return pd.read_sql_query(query, connection, params=params, parse_dates=["trade_date"])
+        frame = pd.read_sql_query(query, connection, params=params, parse_dates=["trade_date"])
+    return _restate_qfq_from_raw(frame)
+
+
+def load_daily_screening_panel(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    symbols: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Load the point-in-time daily panel used by screening and replay."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
+
+    where: list[str] = []
+    params: list[str] = []
+    if start_date:
+        where.append("daily.trade_date >= ?")
+        params.append(normalize_trade_date(start_date))
+    if end_date:
+        where.append("daily.trade_date <= ?")
+        params.append(normalize_trade_date(end_date))
+    if symbols:
+        clean_symbols = [str(symbol) for symbol in symbols if symbol]
+        if clean_symbols:
+            placeholders = ", ".join("?" for _ in clean_symbols)
+            where.append(f"daily.ts_code IN ({placeholders})")
+            params.extend(clean_symbols)
+    predicate = f"WHERE {' AND '.join(where)}" if where else ""
+    query = f"""
+        SELECT
+            daily.trade_date,
+            daily.ts_code,
+            daily.open_qfq,
+            daily.close_qfq,
+            daily.high_qfq,
+            daily.low_qfq,
+            daily.open_raw,
+            daily.close_raw,
+            daily.high_raw,
+            daily.low_raw,
+            daily.adj_factor,
+            daily.volume,
+            daily.amount,
+            basic.turnover_rate,
+            basic.volume_ratio AS daily_basic_volume_ratio,
+            basic.circ_mv,
+            basic.total_mv,
+            stock.name,
+            stock.industry,
+            stock.market,
+            stock.list_date,
+            stock.list_status,
+            stock.delist_date,
+            limits.limit_types
+        FROM {DAILY_TABLE} AS daily
+        LEFT JOIN {DAILY_BASIC_TABLE} AS basic
+            ON basic.trade_date = daily.trade_date
+            AND basic.ts_code = daily.ts_code
+        LEFT JOIN {STOCK_BASIC_TABLE} AS stock
+            ON stock.ts_code = daily.ts_code
+        LEFT JOIN (
+            SELECT trade_date, ts_code, GROUP_CONCAT(limit_type) AS limit_types
+            FROM {LIMIT_EVENT_DAILY_TABLE}
+            GROUP BY trade_date, ts_code
+        ) AS limits
+            ON limits.trade_date = daily.trade_date
+            AND limits.ts_code = daily.ts_code
+        {predicate}
+        ORDER BY daily.trade_date, daily.ts_code
+    """
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        frame = pd.read_sql_query(query, connection, params=params, parse_dates=["trade_date"])
+    return _restate_qfq_from_raw(frame)
+
+
+def load_index_daily_history(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    benchmark: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """Load one stored benchmark history without filling missing sessions."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
+    where = ["ts_code = ?"]
+    params = [str(benchmark)]
+    if start_date:
+        where.append("trade_date >= ?")
+        params.append(normalize_trade_date(start_date))
+    if end_date:
+        where.append("trade_date <= ?")
+        params.append(normalize_trade_date(end_date))
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        return pd.read_sql_query(
+            f"""
+            SELECT ts_code, trade_date, open, high, low, close, pct_chg, vol, amount
+            FROM {INDEX_DAILY_TABLE}
+            WHERE {' AND '.join(where)}
+            ORDER BY trade_date
+            """,
+            connection,
+            params=params,
+            parse_dates=["trade_date"],
+        )
+
+
+def load_known_corporate_events(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    as_of: str,
+    start_date: str,
+    end_date: str,
+    symbols: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Load only events already retrieved by as_of to preserve replay integrity."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
+    params = [normalize_trade_date(start_date), normalize_trade_date(end_date), normalize_trade_date(as_of)]
+    symbol_sql = _symbol_predicate(symbols, params)
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        return pd.read_sql_query(
+            f"""
+            SELECT dataset, ts_code, event_date, payload_json, source, retrieved_at
+            FROM {CORPORATE_EVENTS_TABLE}
+            WHERE event_date BETWEEN ? AND ?
+                AND substr(retrieved_at, 1, 10) <= ?{symbol_sql}
+            ORDER BY event_date, ts_code, dataset
+            """,
+            connection,
+            params=params,
+        )
+
+
+def write_short_screen_run(
+    payload: Mapping[str, object],
+    *,
+    outcomes: Sequence[Mapping[str, object]] | None = None,
+    db_path: Path = DEFAULT_DB_PATH,
+    parent_run_id: str | None = None,
+) -> str:
+    """Persist one reproducible screen or replay result and optional raw outcomes."""
+    created_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    run_id = hashlib.sha256(f"{created_at}:{encoded}".encode("utf-8")).hexdigest()[:24]
+    requested_range = payload.get("requested_range")
+    requested_range = requested_range if isinstance(requested_range, Mapping) else {}
+    run = (
+        run_id,
+        str(payload.get("operation") or "short_screen"),
+        str(payload.get("profile") or "") or None,
+        str(payload.get("benchmark") or "") or None,
+        str(payload.get("requested_as_of") or "") or None,
+        str(requested_range.get("start_date") or "") or None,
+        str(requested_range.get("end_date") or "") or None,
+        encoded,
+        created_at,
+        int(payload.get("schema_version") or 1),
+        str(payload.get("strategy_contract") or "") or None,
+        str(payload.get("symbol") or payload.get("ts_code") or "") or None,
+        str(parent_run_id or payload.get("parent_run_id") or "") or None,
+    )
+    outcome_rows = []
+    for item in outcomes or []:
+        outcome_rows.append(
+            (
+                run_id,
+                normalize_trade_date(item["signal_date"]),
+                normalize_trade_date(item["entry_date"]),
+                normalize_trade_date(item["exit_date"]),
+                str(item["symbol"]),
+                int(item["horizon"]),
+                str(item.get("entry_basis") or "") or None,
+                _float_or_none(item.get("net_return")),
+                _float_or_none(item.get("benchmark_return")),
+                _float_or_none(item.get("excess_return")),
+                _float_or_none(item.get("mae")),
+                _float_or_none(item.get("mfe")),
+                json.dumps(item.get("context") or {}, ensure_ascii=False, sort_keys=True, default=str),
+            )
+        )
+    db_path = ensure_database(db_path)
+    with closing(sqlite3.connect(db_path)) as connection:
+        ensure_schema(connection)
+        connection.execute(
+            f"""
+            INSERT INTO {SHORT_SCREEN_RUN_TABLE}
+                (run_id, operation, profile, benchmark, requested_as_of, start_date, end_date,
+                 payload_json, created_at, schema_version, strategy_contract, ts_code, parent_run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            run,
+        )
+        if outcome_rows:
+            connection.executemany(
+                f"""
+                INSERT INTO {SHORT_SCREEN_OUTCOME_TABLE}
+                    (run_id, signal_date, entry_date, exit_date, ts_code, horizon_sessions,
+                     entry_basis, net_return, benchmark_return, excess_return, mae, mfe, context_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                outcome_rows,
+            )
+        connection.commit()
+    return run_id
+
+
+def load_short_screen_run(
+    run_id: str,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    expected_operations: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """Load one explicitly requested short-research run and its metadata."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Market data database not found: {db_path}")
+    ensure_database(db_path)
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            f"""
+            SELECT run_id, operation, schema_version, strategy_contract, ts_code,
+                   parent_run_id, payload_json, created_at
+            FROM {SHORT_SCREEN_RUN_TABLE}
+            WHERE run_id = ?
+            """,
+            (str(run_id),),
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"Short research run not found: {run_id}")
+    operation = str(row["operation"])
+    if expected_operations and operation not in set(expected_operations):
+        expected = ", ".join(expected_operations)
+        raise ValueError(f"Run {run_id} is {operation!r}; expected one of: {expected}")
+    try:
+        payload = json.loads(str(row["payload_json"]))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Run {run_id} contains invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Run {run_id} payload must be a JSON object")
+    return {
+        "run_id": str(row["run_id"]),
+        "operation": operation,
+        "schema_version": row["schema_version"],
+        "strategy_contract": row["strategy_contract"],
+        "ts_code": row["ts_code"],
+        "parent_run_id": row["parent_run_id"],
+        "created_at": row["created_at"],
+        "payload": payload,
+    }
+
+
+def list_short_recommendation_runs(
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, object]]:
+    """List saved recommendation records without opening them or initiating review."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return []
+    ensure_database(db_path)
+    where = ["operation = 'short_confirmation'"]
+    params: list[object] = []
+    if symbol:
+        where.append("ts_code = ?")
+        params.append(str(symbol))
+    params.append(max(1, int(limit)))
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT run_id, ts_code, strategy_contract, requested_as_of,
+                   schema_version, parent_run_id, payload_json, created_at
+            FROM {SHORT_SCREEN_RUN_TABLE}
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    results: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            payload = {}
+        recommendation = payload.get("recommendation") if isinstance(payload, dict) else {}
+        recommendation = recommendation if isinstance(recommendation, Mapping) else {}
+        results.append(
+            {
+                "recommendation_run_id": str(row["run_id"]),
+                "symbol": row["ts_code"],
+                "strategy_contract": row["strategy_contract"],
+                "as_of": row["requested_as_of"],
+                "action_label": recommendation.get("action_label"),
+                "decision_ready": payload.get("decision_ready") if isinstance(payload, dict) else None,
+                "decision_snapshot_saved": payload.get("decision_snapshot_saved") if isinstance(payload, dict) else None,
+                "created_at": row["created_at"],
+            }
+        )
+    return results
 
 
 def _symbol_predicate(symbols: Sequence[str] | None, params: list[str]) -> str:

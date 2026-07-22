@@ -13,14 +13,16 @@
 
 ## 授权边界
 
-- 只有用户明确要求参考、复用或评估历史决策、偏好、交易记录或报告时，才读取相关历史内容。当前持仓按 `skills/shared/research-discipline.md` 的“当前持仓上下文”处理：仅在持仓、行动、组合风险或持仓策略相关任务中读取，不因此读取完整交易历史。
+- 只有用户明确要求参考、复用或评估历史决策、偏好、交易记录或报告时，才读取相关历史内容。当前持仓按 [`../skills/shared/portfolio-and-watchlist.md`](../skills/shared/portfolio-and-watchlist.md) 处理：仅在持仓、行动、组合风险或持仓策略相关任务中读取，不因此读取完整交易历史。
 - 用户授权复用 `files/` 资料库时，先读取 `data/research-library/files/INDEX.md`，再选择与当前主题直接相关的摘要和原件；索引仅用于导航，不替代原始来源或本轮时效核验。
 - 用户只要求保存新内容时，不读取旧 Wiki；用户只要求归档原始资料时，不初始化或更新 Wiki。
 - 用户直接陈述自己的当前持仓时，可通过 `scripts/portfolio_context.py` 维护项目本地的当前持仓；计划交易和条件情景不得写成已持仓。`profile.md`、`portfolio.md` 和完整交易历史仍只在用户提供或明确授权时维护。
-- Agent 按 `skills/shared/research-discipline.md` 的“研究跟踪池”规则保存明确推荐且值得继续跟踪的股票；写入授权不产生后续读取授权。全市场筛选、寻找新机会、重新选股或生成新候选名单时，不读取跟踪池、不用跟踪状态影响研究范围或排序。只有用户明确要求查看跟踪池、继续跟踪、复盘、复用历史研究，或明确点名已跟踪股票并要求沿原路径研究时，才读取对应记录和关联报告；只有用户明确要求审阅整个跟踪池时才读取全部记录。
+- 研究跟踪池按 [`../skills/shared/portfolio-and-watchlist.md`](../skills/shared/portfolio-and-watchlist.md) 处理。写入授权不产生后续读取授权；全市场筛选、寻找新机会、重新选股或生成新候选名单时，不读取跟踪池，也不以跟踪状态影响研究范围或排序。只有用户明确要求查看、继续跟踪、复盘、复用历史研究，或点名已跟踪股票并要求沿原路径研究时，才读取对应记录和关联报告；审阅整个跟踪池须获得明确授权。
 - Wiki 和旧报告不是当前事实源；复用时重核原始来源、`as_of` 和时效，并保留历史观点的原时间边界。
 
 ## 长链路任务状态
+
+短线推荐记录与研究复盘另遵循以下边界：推荐集合是可查询的研究索引，不是持仓或交易账本。`short_confirmation` 记录只在用户明确确认/保存推荐时建立；`review_status` 默认不存在或为 `not_requested`。系统不得因为用户正在做研究选股而中途加载推荐、生成复盘或提醒复盘。只有用户明确要求复盘，才从推荐 `run_id` 加载原始时点快照并创建 `short_review` 子记录；没有真实成交信息时，后验价格路径只能标为研究结果，不能写成账户收益。
 
 满足任一条件时使用 `scripts/research_task_state.py`：任务跨多个阶段、即将运行长命令或读取大量资料、需要 Agent 交接、可能触发上下文压缩，或用户要求保存过程。简单事实核验、单次行情和短答不建立状态。
 
@@ -36,12 +38,14 @@ python3 scripts/research_task_state.py complete --task <task-id>
 
 ## 原始资料归档
 
-用户要求保存或复用外部资料时：
+只要本轮在 `staging/<task-id>/raw/` 创建或保留外部原件，归档、删除整个暂存目录与重建索引就是交付条件。用户要求保存或复用外部资料时：
 
 1. 先放入 `data/research-library/staging/<task-id>/raw/`。
 2. Agent 逐一审阅原件并决定：整理为可复用资料、保留待核验，或以明确理由丢弃；不要机械转写 HTML、JSON、CSV、工具日志或线性 PDF 文本。
-3. 在 `archive-plan.json` 中写入文档内容、来源和丢弃决定；计划必须覆盖 `raw/` 下每一份文件，重要原件进入文档的 `source_files`，其余文件写入 `discard_files`。每份文档的 `as_of` 是市场/证据时点，`archived_on` 是归档日期；省略 `archived_on` 时脚本使用执行归档当天（香港时区），显式写入也必须等于这一天。资料库路径、附件文件名和索引日期只使用 `archived_on`。字段与最新约束以 `python3 scripts/curate_research_library.py archive --help` 和脚本校验为准。
-4. 研究完成时执行 `python3 scripts/research_task_state.py complete --task <task-id>`；它会先应用归档计划，再将任务置为终态并删除整个 `staging/<task-id>/`。正式报告、归档资料和 SQLite 是完成后的持久去向，`staging/` 不是恢复仓库。需要在仍可恢复的 active/blocked 任务中提前整理资料时，才显式运行 `curate_research_library.py archive --apply`。
+3. 在 `archive-plan.json` 中写入文档内容、来源和丢弃决定；计划必须覆盖 `raw/` 下每一份文件，重要原件进入文档的 `source_files`，其余文件写入带明确理由的 `discard_files`。每份文档的 `as_of` 是市场/证据时点，`archived_on` 是归档日期；省略 `archived_on` 时脚本使用执行归档当天（香港时区），显式写入也必须等于这一天。资料库路径、附件文件名和索引日期只使用 `archived_on`。日线、技术指标、筛选 CSV、渲染页和采集元数据等可再生成工作物不归档为资料文档。字段与最新约束以 `python3 scripts/curate_research_library.py archive --help` 和脚本校验为准。
+4. 先运行 `python3 scripts/curate_research_library.py archive --task <task-id>` 作只读预检；失败时修正计划或核验记录，不得跳过。
+5. 研究完成时运行 `python3 scripts/research_task_state.py complete --task <task-id>`；它会应用归档计划、写入终态并删除整个 `staging/<task-id>/`。不得以单独的 `archive --apply` 替代此完成步骤。只有 active/blocked 任务仍需保持可恢复时，才可提前运行 `curate_research_library.py archive --apply`。
+6. 确认 `staging/<task-id>/` 已不存在，再运行 `python3 scripts/curate_research_library.py rebuild-files-index`。最终答复报告归档状态、归档/丢弃的原件数量和暂存目录已删除；任一步未完成则保持任务 `active` 或 `blocked` 并说明原因。正式报告、归档资料和 SQLite 是完成后的持久去向，`staging/` 不是恢复仓库。
 
 复杂 PDF 默认保留原件。完成渲染查看并记录页码、表名和关键口径后，`pdf_validations` 只用于说明核验程度；原始 PDF 仍随资料摘要归档至 `files/`，不在完成任务时删除。日线、估值、资金、涨跌停、交易日历和披露日历等日常结构化查询只进入 SQLite 或任务暂存区。
 

@@ -9,7 +9,13 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from tushare_sync import TushareHttpClient, fetch_daily_basic, fetch_daily_ohlcv_with_adjustment
+from tushare_sync import (
+    TushareHttpClient,
+    fetch_daily_basic,
+    fetch_daily_ohlcv_with_adjustment,
+    fetch_stock_basic,
+    list_symbols_for_period,
+)
 from tushare_transport import TushareRequestPolicy, classify_tushare_exception
 
 
@@ -83,23 +89,39 @@ class TushareSyncTests(unittest.TestCase):
             def daily(self, **params: object) -> pd.DataFrame:
                 assert "high" in str(params["fields"])
                 assert "low" in str(params["fields"])
+                assert "open" in str(params["fields"])
+                assert "amount" in str(params["fields"])
                 return pd.DataFrame(
                     [
                         {
                             "ts_code": "000001.SZ",
                             "trade_date": "20260102",
+                            "open": 9.8,
                             "close": 10.0,
                             "high": 10.5,
                             "low": 9.5,
                             "vol": 1000.0,
+                            "amount": 10000.0,
+                        },
+                        {
+                            "ts_code": "000002.SZ",
+                            "trade_date": "20260102",
+                            "open": 19.8,
+                            "close": 20.0,
+                            "high": 20.5,
+                            "low": 19.5,
+                            "vol": 800.0,
+                            "amount": 16000.0,
                         },
                         {
                             "ts_code": "000001.SZ",
                             "trade_date": "20260105",
+                            "open": 10.8,
                             "close": 11.0,
                             "high": 11.5,
                             "low": 10.5,
                             "vol": 1200.0,
+                            "amount": 12000.0,
                         },
                     ]
                 )
@@ -109,12 +131,13 @@ class TushareSyncTests(unittest.TestCase):
                     [
                         {"ts_code": "000001.SZ", "trade_date": "20260102", "adj_factor": 1.0},
                         {"ts_code": "000001.SZ", "trade_date": "20260105", "adj_factor": 1.1},
+                        {"ts_code": "000002.SZ", "trade_date": "20260102", "adj_factor": 1.0},
                     ]
                 )
 
         daily = fetch_daily_ohlcv_with_adjustment(
             DailyClient(),
-            ["000001.SZ"],
+            ["000001.SZ", "000002.SZ"],
             "20260102",
             "20260105",
             sleep_seconds=0,
@@ -122,8 +145,53 @@ class TushareSyncTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(daily.close.loc[pd.Timestamp("2026-01-02"), "000001.SZ"], 10 / 1.1)
+        self.assertAlmostEqual(daily.open.loc[pd.Timestamp("2026-01-02"), "000001.SZ"], 9.8 / 1.1)
         self.assertAlmostEqual(daily.high.loc[pd.Timestamp("2026-01-02"), "000001.SZ"], 10.5 / 1.1)
         self.assertAlmostEqual(daily.low.loc[pd.Timestamp("2026-01-05"), "000001.SZ"], 10.5)
+        self.assertEqual(daily.amount.loc[pd.Timestamp("2026-01-05"), "000001.SZ"], 12000.0)
+        self.assertEqual(daily.raw_close.loc[pd.Timestamp("2026-01-02"), "000001.SZ"], 10.0)
+        self.assertEqual(daily.adjustment_factor.loc[pd.Timestamp("2026-01-05"), "000001.SZ"], 1.1)
+        self.assertTrue(pd.isna(daily.close.loc[pd.Timestamp("2026-01-05"), "000002.SZ"]))
+
+    def test_lifecycle_symbol_selection_keeps_overlapping_delisted_names(self) -> None:
+        class LifecycleClient:
+            def stock_basic(self, **params: object) -> pd.DataFrame:
+                status = str(params["list_status"])
+                if status == "L":
+                    return pd.DataFrame(
+                        [{"ts_code": "000001.SZ", "list_date": "20100101", "delist_date": ""}]
+                    )
+                if status == "D":
+                    return pd.DataFrame(
+                        [{"ts_code": "000002.SZ", "list_date": "20100101", "delist_date": "20250630"}]
+                    )
+                return pd.DataFrame()
+
+        client = LifecycleClient()
+        policy = TushareRequestPolicy(min_interval_seconds=0, max_attempts=1)
+        selected = list_symbols_for_period(client, "20250101", "20251231", request_policy=policy)
+        self.assertEqual(selected, ["000001.SZ", "000002.SZ"])
+
+    def test_stock_basic_fetch_merges_lifecycle_statuses(self) -> None:
+        class LifecycleClient:
+            def stock_basic(self, **params: object) -> pd.DataFrame:
+                status = str(params["list_status"])
+                return pd.DataFrame(
+                    [{
+                        "ts_code": f"{status}00001.SZ",
+                        "name": status,
+                        "list_date": "20100101",
+                        "list_status": status,
+                        "delist_date": "20250630" if status == "D" else "",
+                    }]
+                )
+
+        frame = fetch_stock_basic(
+            LifecycleClient(),
+            request_policy=TushareRequestPolicy(min_interval_seconds=0, max_attempts=1),
+        )
+        self.assertEqual(set(frame["list_status"]), {"L", "D", "P"})
+        self.assertEqual(frame.loc[frame["list_status"].eq("D"), "delist_date"].iloc[0], "20250630")
 
 
 if __name__ == "__main__":

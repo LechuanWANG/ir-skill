@@ -22,7 +22,12 @@ from market_data_store import (
 )
 import market_data_migrations as migrations
 from market_data_migrations import MIGRATION_TABLE, Migration
-from tushare_sector_data import main, select_performance_universe, summarize_sector_performance
+from tushare_sector_data import (
+    main,
+    select_performance_universe,
+    summarize_sector_performance,
+    summarize_sector_rotation,
+)
 
 
 class SectorDataTests(unittest.TestCase):
@@ -38,7 +43,16 @@ class SectorDataTests(unittest.TestCase):
                     f"SELECT version, name FROM {MIGRATION_TABLE} ORDER BY version"
                 ).fetchall()
 
-            self.assertEqual(rows, [(1, "sector_data_tables")])
+            self.assertEqual(
+                rows,
+                [
+                    (1, "sector_data_tables"),
+                    (2, "short_screen_data"),
+                    (3, "raw_adjustment_data"),
+                    (4, "stock_lifecycle_data"),
+                    (5, "short_research_protocol"),
+                ],
+            )
 
     def test_existing_database_is_backed_up_before_a_pending_migration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -65,7 +79,13 @@ class SectorDataTests(unittest.TestCase):
                     connection.execute(
                         f"SELECT version, name FROM {MIGRATION_TABLE} ORDER BY version"
                     ).fetchall(),
-                    [(1, "sector_data_tables")],
+                    [
+                        (1, "sector_data_tables"),
+                        (2, "short_screen_data"),
+                        (3, "raw_adjustment_data"),
+                        (4, "stock_lifecycle_data"),
+                        (5, "short_research_protocol"),
+                    ],
                 )
 
     def test_failed_pending_migration_reports_a_recoverable_backup(self) -> None:
@@ -76,7 +96,7 @@ class SectorDataTests(unittest.TestCase):
             def fail_migration(connection: sqlite3.Connection, tables: object) -> None:
                 raise RuntimeError("intentional migration failure")
 
-            failing_migration = Migration(2, "intentional_failure", fail_migration)
+            failing_migration = Migration(6, "intentional_failure", fail_migration)
             with patch.object(migrations, "MIGRATIONS", (*migrations.MIGRATIONS, failing_migration)):
                 with self.assertRaisesRegex(RuntimeError, "备份保留在"):
                     ensure_database(db_path)
@@ -89,7 +109,13 @@ class SectorDataTests(unittest.TestCase):
                     backup.execute(
                         f"SELECT version, name FROM {MIGRATION_TABLE} ORDER BY version"
                     ).fetchall(),
-                    [(1, "sector_data_tables")],
+                    [
+                        (1, "sector_data_tables"),
+                        (2, "short_screen_data"),
+                        (3, "raw_adjustment_data"),
+                        (4, "stock_lifecycle_data"),
+                        (5, "short_research_protocol"),
+                    ],
                 )
 
     def test_default_plan_uses_ths_cross_section_endpoints(self) -> None:
@@ -106,6 +132,14 @@ class SectorDataTests(unittest.TestCase):
         )
         self.assertEqual(payload["requests"][1]["params"], {"trade_date": "20260717"})
         self.assertEqual(payload["taxonomy_policy"]["fundamental_industry_reference"], "SW2021")
+
+    def test_catalog_exposes_rotation_analysis(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(["catalog"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("rotation", json.loads(output.getvalue())["commands"])
 
     def test_provider_rejects_an_unsupported_dataset(self) -> None:
         with self.assertRaises(SystemExit):
@@ -278,6 +312,85 @@ class SectorDataTests(unittest.TestCase):
             self.assertEqual(payload["ranking"][0]["sector_code"], "885001.TI")
             self.assertAlmostEqual(payload["ranking"][0]["return_20d"], 20.0)
             self.assertEqual(payload["ranking"][0]["net_amount"], 10.0)
+
+    def test_rotation_compares_session_changes_and_rank_movement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "research.sqlite"
+            master = pd.DataFrame(
+                [
+                    {"ts_code": "885001.TI", "name": "板块甲", "type": "industry"},
+                    {"ts_code": "885002.TI", "name": "板块乙", "type": "industry"},
+                    {"ts_code": "885003.TI", "name": "板块丙", "type": "industry"},
+                ]
+            )
+            closes = {
+                "885001.TI": [100.0, 100.0, 100.0, 100.0, 100.0, 101.0, 106.0],
+                "885002.TI": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 104.0],
+                "885003.TI": [100.0, 100.0, 100.0, 100.0, 100.0, 99.0, 98.0],
+            }
+            daily_records = []
+            for offset, trade_date in enumerate(pd.bdate_range(end="2026-07-17", periods=7)):
+                for sector_code, values in closes.items():
+                    previous_close = values[offset - 1] if offset else values[offset]
+                    daily_records.append(
+                        {
+                            "ts_code": sector_code,
+                            "trade_date": trade_date.strftime("%Y%m%d"),
+                            "close": values[offset],
+                            "pct_change": (values[offset] / previous_close - 1.0) * 100.0,
+                        }
+                    )
+            persist_tushare_collection("sector_ths_master", "ths_index", master, db_path=db_path)
+            persist_tushare_collection(
+                "sector_ths_daily",
+                "ths_daily",
+                pd.DataFrame(daily_records),
+                db_path=db_path,
+            )
+            history = load_sector_daily_history(
+                db_path=db_path,
+                provider="ths",
+                end_date="20260717",
+                sector_type="industry",
+            )
+
+            payload = summarize_sector_rotation(
+                history,
+                as_of="20260717",
+                provider="ths",
+                limit=1,
+            )
+
+            self.assertEqual(payload["effective_trade_date"], "2026-07-17")
+            self.assertEqual(payload["previous_effective_trade_date"], "2026-07-16")
+            self.assertEqual(payload["breadth"]["advancers"], 1)
+            self.assertEqual(payload["previous_breadth"]["advancers"], 2)
+            self.assertEqual(payload["breadth_change"]["advancers"], -1)
+            self.assertEqual(payload["coverage"]["with_5d_rank_change"], 3)
+            self.assertEqual(payload["top_changes"][0]["sector_code"], "885001.TI")
+            self.assertEqual(payload["top_changes"][0]["rank_change_5d"], 1.0)
+            self.assertEqual(payload["bottom_changes"][0]["sector_code"], "885002.TI")
+            self.assertEqual(payload["bottom_changes"][0]["rank_change_5d"], -1.0)
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "rotation",
+                        "--provider",
+                        "ths",
+                        "--sector-type",
+                        "industry",
+                        "--as-of",
+                        "20260717",
+                        "--db-path",
+                        str(db_path),
+                        "--limit",
+                        "1",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(output.getvalue())["operation"], "rotation")
 
     def test_industry_flow_universe_excludes_unmatched_nested_industries(self) -> None:
         frame = pd.DataFrame(
